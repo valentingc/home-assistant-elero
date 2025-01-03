@@ -322,6 +322,7 @@ Feature branches with lots of small commits (especially titled "oops", "fix typo
 ---
 
 # Version
+* 3.3.2 - Jan 03, 2025 - try to monitor ser2net connection and retry failed connections  
 * 3.3.1 - March 11, 2023 [Fix Deprecated Constant Usage](https://github.com/W00D00/home-assistant-elero/pull/45)
 * 3.3 - May 12, 2023 [Using remote transmitter with ser2net](https://github.com/W00D00/home-assistant-elero/pull/40) & [Fix execution on HA2023.5.](https://github.com/W00D00/home-assistant-elero/pull/43)
 * 3.2.2 - November 17, 2022 [Introduce the unique ID](https://github.com/W00D00/home-assistant-elero/pull/38)

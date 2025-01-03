@@ -3,15 +3,15 @@
 __version__ = "3.3.1"
 
 import logging
+import os
+import threading
+import time
 
 import homeassistant.helpers.config_validation as cv
 import serial
 import voluptuous as vol
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from serial.tools import list_ports
-
-import os
-import threading
 
 # Python libraries/modules that you would normally install for your component.
 REQUIREMENTS = ["pyserial>=3.4"]
@@ -668,9 +668,10 @@ class EleroRemoteTransmitter(EleroTransmitter):
     
     """
     def __init__(self, serial_number, address):
-        
         self._address = address
-        super().__init__(None, serial_number, None, None, None, None, )
+        self._connected = False
+        self._reconnect_thread = threading.Thread(target=self._monitor_connection, daemon=True)
+        super().__init__(None, serial_number, None, None, None, None)
 
     
     def init_serial(self):
@@ -680,7 +681,10 @@ class EleroRemoteTransmitter(EleroTransmitter):
         self.init_serial_port()
         # Get the learned channels from the transmitter.
         if self._serial:
+            self._connected = True
             self.check()
+            if not self._reconnect_thread.is_alive():
+                self._reconnect_thread.start()
 
 
     def init_serial_port(self):
@@ -688,18 +692,42 @@ class EleroRemoteTransmitter(EleroTransmitter):
 
         url = f"socket://{self._address}"
         # https://pyserial.readthedocs.io/en/latest/url_handlers.html#urls
-        try:
-            self._serial = serial.serial_for_url(url)
-            _LOGGER.info(
+        # try:
+        #     self._serial = serial.serial_for_url(url)
+        #     _LOGGER.info(
+        #             f"Elero Transmitter Stick is remotely connected to '{self._address}' "
+        #             f"with serial number: '{self._serial_number}'."
+        #         )
+        # except serial.serialutil.SerialException as exc:
+        #     _LOGGER.exception(
+        #         f"Unable to connect to remote serial port '{url}' for serial "
+        #         f"number {self._serial_number}: '{exc}'."
+        #     )
+        retries = 0
+        while retries < 10:
+            try:
+                self._serial = serial.serial_for_url(url)
+                _LOGGER.info(
                     f"Elero Transmitter Stick is remotely connected to '{self._address}' "
                     f"with serial number: '{self._serial_number}'."
                 )
-        except serial.serialutil.SerialException as exc:
-            _LOGGER.exception(
-                f"Unable to connect to remote serial port '{url}' for serial "
-                f"number {self._serial_number}: '{exc}'."
-            )
+                self._connected = True
+                return
+            except serial.serialutil.SerialException as exc:
+                retries += 1
+                _LOGGER.error(
+                    f"Failed to connect to remote serial port '{url}' (attempt {retries}): {exc}"
+                )
+                time.sleep(2 ** retries)
+        self._connected = False
 
     def log_out_serial_port_details(self):
         """Log out the details of the serial connection."""
         _LOGGER.debug(f"Remote Transmitter stick on address '{self._address}'.")
+    def _monitor_connection(self):
+        """Monitor the connection and attempt to reconnect if dropped."""
+        while True:
+            if not self._connected:
+                _LOGGER.error(f"Connection to {self._address} lost. Attempting to reconnect.")
+                self.init_serial_port()
+            time.sleep(10)  # Check connection every 10 seconds
