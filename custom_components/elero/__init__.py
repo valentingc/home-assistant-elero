@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.3.3"
+__version__ = "3.3.4"
 
 import logging
 import os
@@ -335,7 +335,9 @@ class EleroTransmitter(object):
 
     def close_serial(self):
         """Close the serial connection of the transmitter."""
-        self._serial.close()
+        with self._threading_lock:
+            if self._serial and self._serial.is_open:
+                self._serial.close()
 
     def get_transmitter_state(self):
         """Return with transmitter is usable or not."""
@@ -691,18 +693,6 @@ class EleroRemoteTransmitter(EleroTransmitter):
         """Init the serial port to the transmitter."""
 
         url = f"socket://{self._address}"
-        # https://pyserial.readthedocs.io/en/latest/url_handlers.html#urls
-        # try:
-        #     self._serial = serial.serial_for_url(url)
-        #     _LOGGER.info(
-        #             f"Elero Transmitter Stick is remotely connected to '{self._address}' "
-        #             f"with serial number: '{self._serial_number}'."
-        #         )
-        # except serial.serialutil.SerialException as exc:
-        #     _LOGGER.exception(
-        #         f"Unable to connect to remote serial port '{url}' for serial "
-        #         f"number {self._serial_number}: '{exc}'."
-        #     )
         retries = 0
         while retries < 10:
             try:
@@ -724,10 +714,66 @@ class EleroRemoteTransmitter(EleroTransmitter):
     def log_out_serial_port_details(self):
         """Log out the details of the serial connection."""
         _LOGGER.debug(f"Remote Transmitter stick on address '{self._address}'.")
+
+    def close_serial(self):
+        """Close the serial connection of the remote transmitter."""
+        with self._threading_lock:
+            self._connected = False
+            if self._serial and self._serial.is_open:
+                self._serial.close()
+
     def _monitor_connection(self):
         """Monitor the connection and attempt to reconnect if dropped."""
         while True:
-            if not self._connected:
-                _LOGGER.error(f"Connection to {self._address} lost. Attempting to reconnect.")
+            with self._threading_lock:
+                if not self._connected or not self._serial or not self._serial.is_open:
+                    _LOGGER.error(f"Connection to {self._address} lost. Attempting to reconnect.")
+                    self.init_serial_port()
+                else:
+                    # periodically check if still connected
+                    try:
+                        self._serial.in_waiting  # keep-alive check
+                    except serial.serialutil.SerialException:
+                        self._connected = False
+            time.sleep(5)  # check more frequently
+
+    def __process_command(self, command_text, int_list, channel, resp_length):
+        """Ensure the recursive func handling."""
+        int_list.append(self.__calculate_checksum(*int_list))
+        bytes_data = self.__create_serial_data(int_list)
+
+        attempt = 0
+        while attempt < 4:
+            attempt += 1
+            try:
+                with self._threading_lock:
+                    if not self._serial.is_open:
+                        self._serial.open()
+                    self._serial.write(bytes_data)
+                    ser_resp = self._serial.read(resp_length)
+                if ser_resp:
+                    resp = self.__parse_response(ser_resp, channel)
+                    rsp = resp["status"]
+                    chs = resp["chs"]
+                    _LOGGER.debug(
+                        f"Send '{command_text}' command to the transmitter: "
+                        f"'{self._serial_number}' ch: '{channel}' serial command: "
+                        f"'{bytes_data}' serial response: '{ser_resp}' "
+                        f"response: '{rsp}' from ch(s): '{chs}' "
+                        f"attempt: '{attempt}'."
+                    )
+                    # Easy Check.
+                    if command_text == COMMAND_CHECH_TEXT:
+                        self.__set_learned_channels(resp)
+                    else:
+                        self.__process_response(resp)
+                    break
+            except serial.serialutil.SerialException as exc:
+                self._connected = False  # force reconnection
+                _LOGGER.exception(
+                    f"Problem communicating with transmitter: "
+                    f"'{self._serial_number}' send command: '{command_text}' "
+                    f"ch: '{channel}' serial command: '{bytes_data}' "
+                    f"attempt: '{attempt}' exception: '{exc}'"
+                )
                 self.init_serial_port()
-            time.sleep(10)  # Check connection every 10 seconds
