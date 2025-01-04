@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.3.2"
+__version__ = "3.3.3"
 
 import logging
 import os
@@ -552,7 +552,7 @@ class EleroTransmitter(object):
                         self.__process_response(resp)
                     break
             except serial.serialutil.SerialException as exc:
-                _LOGGER.debug(
+                _LOGGER.exception(
                     f"Problem communicating with transmitter: "
                     f"'{self._serial_number}' send command: '{command_text}' "
                     f"ch: '{channel}' serial command: '{bytes_data}' "
@@ -715,7 +715,7 @@ class EleroRemoteTransmitter(EleroTransmitter):
                 return
             except serial.serialutil.SerialException as exc:
                 retries += 1
-                _LOGGER.error(
+                _LOGGER.exception(
                     f"Failed to connect to remote serial port '{url}' (attempt {retries}): {exc}"
                 )
                 time.sleep(2 ** retries)
