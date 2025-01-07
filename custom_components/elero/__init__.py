@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.3.8"
+__version__ = "3.3.9"
 
 import logging
 import os
@@ -522,8 +522,8 @@ class EleroTransmitter(object):
 
     def __process_command(self, command_text, int_list, channel, resp_length):
         """Ensure the recursive func handling."""
-        int_list.append(self._calculate_checksum(*int_list))
-        bytes_data = self._create_serial_data(int_list)
+        int_list.append(self.__calculate_checksum(*int_list))
+        bytes_data = self.__create_serial_data(int_list)
 
         attempt = 0
         while attempt < 4:
@@ -633,14 +633,14 @@ class EleroTransmitter(object):
 
         return response
 
-    def _calculate_checksum(self, *args):
+    def __calculate_checksum(self, *args):
         """Calculate checksum.
 
         All the sum of all bytes (Header to CS) must be 0x00.
         """
         return (256 - sum(args)) % 256
 
-    def _create_serial_data(self, int_list):
+    def __create_serial_data(self, int_list):
         """Convert integers to bytes for serial communication."""
         bytes_data = bytes(int_list)
         return bytes_data
@@ -683,8 +683,9 @@ class EleroRemoteTransmitter(EleroTransmitter):
     
     """
     def __init__(self, serial_number, address):
+        
         self._address = address
-        super().__init__(None, serial_number, None, None, None, None)
+        super().__init__(None, serial_number, None, None, None, None, )
 
     
     def init_serial(self):
@@ -699,23 +700,20 @@ class EleroRemoteTransmitter(EleroTransmitter):
 
     def init_serial_port(self):
         """Init the serial port to the transmitter."""
-        _LOGGER.info(f"Init remote serial port to the transmitter: '{self._serial_number}' on address: '{self._address}'.")
+
         url = f"socket://{self._address}"
-        retries = 0
-        while retries < 10:
-            try:
-                self._serial = serial.serial_for_url(url)
-                _LOGGER.info(
+        # https://pyserial.readthedocs.io/en/latest/url_handlers.html#urls
+        try:
+            self._serial = serial.serial_for_url(url)
+            _LOGGER.info(
                     f"Elero Transmitter Stick is remotely connected to '{self._address}' "
                     f"with serial number: '{self._serial_number}'."
                 )
-                return
-            except Exception as exc:
-                retries += 1
-                _LOGGER.exception(
-                    f"Failed to connect to remote serial port '{url}' (attempt {retries}): {exc}"
-                )
-                time.sleep(2 ** retries)
+        except Exception as exc:
+            _LOGGER.exception(
+                f"Unable to connect to remote serial port '{url}' for serial "
+                f"number {self._serial_number}: '{exc}'."
+            )
 
     def log_out_serial_port_details(self):
         """Log out the details of the serial connection."""

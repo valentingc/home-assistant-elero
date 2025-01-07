@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.3.8"
+__version__ = "3.3.9"
 
 import logging
 
@@ -294,11 +294,11 @@ class EleroCover(CoverEntity):
 
         delta_position = (elapsed_time / self._travel_time) * 100
         if self._is_opening:
-            self._current_position += delta_position
+            self._position += delta_position
         elif self._is_closing:
-            self._current_position -= delta_position 
-        self._current_position = max(0, min(100, self._current_position))
-        self._last_known_position = self._current_position
+            self._position -= delta_position 
+        self._position = max(0, min(100, self._position))
+        self._last_known_position = self._position
 
         self._closed = False
         self._is_closing = False
