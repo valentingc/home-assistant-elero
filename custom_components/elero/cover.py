@@ -31,6 +31,7 @@ from custom_components.elero import (CONF_TRANSMITTER_SERIAL_NUMBER,
                                      INFO_TIMEOUT,
                                      INFO_TOP_POS_STOP_WICH_TILT_POS,
                                      INFO_TOP_POSITION_STOP)
+from homeassistant.helpers.restore_state import RestoreEntity
 
 # Python libraries/modules that you would normally install for your component.
 REQUIREMENTS = []
@@ -139,8 +140,18 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
     add_devices(covers, True)
 
 
-class EleroCover(CoverEntity):
+class EleroCover(CoverEntity, RestoreEntity):
     """Representation of a Elero cover device."""
+
+    async def async_added_to_hass(self):
+        """Call when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        _LOGGER.debug(f"Restoring state for {self.name}")
+        state = await self.async_get_last_state()
+        if state:
+            self._position = state.attributes.get("current_position", None)
+            self._last_known_position = state.attributes.get("last_known_position", None)
+            _LOGGER.debug(f"Restored state: {state.state}")
 
     def __init__(
         self, hass, transmitter, name, channel, device_class, supported_features, travel_time
