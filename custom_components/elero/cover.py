@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.3.7"
+__version__ = "3.3.8"
 
 import logging
 
