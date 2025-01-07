@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.0"
+__version__ = "3.4.1"
 
 import logging
 
@@ -449,35 +449,35 @@ class EleroCover(CoverEntity):
             self._is_closing = False
             self._is_opening = True
             self._state = STATE_OPENING
-            self._position = POSITION_UNDEFINED
+            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
             self._closed = False
             self._is_closing = True
             self._is_opening = False
             self._state = STATE_CLOSING
-            self._position = POSITION_UNDEFINED
+            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_MOVING_UP:
             self._closed = False
             self._is_closing = False
             self._is_opening = True
             self._state = STATE_OPENING
-            self._position = POSITION_UNDEFINED
+            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_MOVING_DOWN:
             self._closed = False
             self._is_closing = True
             self._is_opening = False
             self._state = STATE_CLOSING
-            self._position = POSITION_UNDEFINED
+            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
             self._closed = False
             self._is_closing = False
             self._is_opening = False
             self._state = STATE_UNDEFINED
-            self._position = POSITION_UNDEFINED
+            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
             self._closed = False
