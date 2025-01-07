@@ -13,7 +13,7 @@ from homeassistant.components.light import PLATFORM_SCHEMA
 from homeassistant.const import (CONF_COVERS, CONF_DEVICE_CLASS, CONF_NAME,
                                  STATE_CLOSED, STATE_CLOSING, STATE_OPEN,
                                  STATE_OPENING, STATE_UNKNOWN)
-
+import time
 import custom_components.elero as elero
 from custom_components.elero import (CONF_TRANSMITTER_SERIAL_NUMBER,
                                      INFO_BLOCKING,
@@ -44,6 +44,7 @@ ATTR_ELERO_STATE = "elero_state"
 
 CONF_CHANNEL = "channel"
 CONF_SUPPORTED_FEATURES = "supported_features"
+CONF_TRAVEL_TIME = "travel_time"
 
 ELERO_COVER_DEVICE_CLASSES = {
     "awning": "window",
@@ -95,6 +96,7 @@ COVER_SCHEMA = vol.Schema(
         vol.Required(CONF_NAME): str,
         vol.Required(CONF_SUPPORTED_FEATURES): SUPPORTED_FEATURES_SCHEMA,
         vol.Required(CONF_TRANSMITTER_SERIAL_NUMBER): str,
+        vol.Optional(CONF_TRAVEL_TIME, default=50.0): vol.Coerce(float),
     }
 )
 
@@ -130,6 +132,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
                 cover_conf.get(CONF_CHANNEL),
                 cover_conf.get(CONF_DEVICE_CLASS),
                 cover_conf.get(CONF_SUPPORTED_FEATURES),
+                cover_conf.get(CONF_TRAVEL_TIME),
             )
         )
 
@@ -140,7 +143,7 @@ class EleroCover(CoverEntity):
     """Representation of a Elero cover device."""
 
     def __init__(
-        self, hass, transmitter, name, channel, device_class, supported_features
+        self, hass, transmitter, name, channel, device_class, supported_features, travel_time
     ):
         """Init of a Elero cover."""
         self.hass = hass
@@ -164,6 +167,9 @@ class EleroCover(CoverEntity):
         self._state = None
         self._elero_state = None
         self._response = dict()
+        self._travel_time = travel_time
+        self._last_known_position = None
+        self._start_time = None
 
     @property
     def unique_id(self):
@@ -246,6 +252,9 @@ class EleroCover(CoverEntity):
         if elero_state is not None:
             data[ATTR_ELERO_STATE] = self._elero_state
 
+        data["travel_time"] = self._travel_time
+        data["last_known_position"] = self._last_known_position
+
         return data
 
     def update(self):
@@ -261,6 +270,8 @@ class EleroCover(CoverEntity):
         self._state = STATE_CLOSING
         self._position = POSITION_CLOSED
         self._tilt_position = POSITION_UNDEFINED
+        self._last_known_position = POSITION_CLOSED
+        self._start_time = time.time()
 
     def open_cover(self, **kwargs):
         """Open the cover."""
@@ -271,30 +282,81 @@ class EleroCover(CoverEntity):
         self._state = STATE_OPENING
         self._position = POSITION_OPEN
         self._tilt_position = POSITION_UNDEFINED
+        self._last_known_position = POSITION_OPEN
+        self._start_time = time.time()
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
         self._transmitter.stop(self._channel)
+
+        elapsed_time = time.time() - self._start_time if self._start_time else 0
+        self._start_time = None
+
+        delta_position = (elapsed_time / self._travel_time) * 100
+        if self._is_opening:
+            self._current_position += delta_position
+        elif self._is_closing:
+            self._current_position -= delta_position 
+        self._current_position = max(0, min(100, self._current_position))
+        self._last_known_position = self._current_position
+
         self._closed = False
         self._is_closing = False
         self._is_opening = False
         self._state = STATE_STOPPED
         self._position = POSITION_UNDEFINED
         self._tilt_position = POSITION_UNDEFINED
+        self._last_known_position = self._position
 
     def set_cover_position(self, **kwargs):
         """Move the cover to a specific position."""
         position = kwargs.get(ATTR_POSITION)
-        if position < 13:
-            self.close_cover()
-        elif position > 13 and position < 50:
-            self.cover_ventilation_tilting_position()
-        elif position > 50 and position < 88:
-            self.cover_intermediate_position()
-        elif position > 88:
-            self.open_cover()
+
+        # Validate position input
+        if position is None or not (0 <= position <= 100):
+            _LOGGER.error("Invalid position: must be between 0 and 100")
+            return
+
+        # Validate current position availability
+        if self._last_known_position is None:
+            _LOGGER.error("Cannot set position because the last known position is unavailable.")
+            return
+
+        target_position = position
+        current_position = self._last_known_position
+
+        if target_position == current_position:
+            _LOGGER.info("Target position is the same as the current position. No action needed.")
+            return
+
+        # Determine direction
+        move_time = abs(target_position - current_position) / 100 * self._travel_time
+        if target_position > current_position:
+            self.open_cover()  # Move up
+            self._state = STATE_OPENING
         else:
-            _LOGGER.error(f"Wrong Position slider data: {position}")
+            self.close_cover()  # Move down
+            self._state = STATE_CLOSING
+
+        # Schedule to stop the cover after the calculated travel time.
+        def stop_cover_after_travel_time():
+            """Stop the cover after moving for the calculated travel time."""
+            self.stop_cover()
+            self._position = target_position
+            self._last_known_position = target_position
+
+            # Update the state based on the final position
+            if target_position == 100:
+                self._state = STATE_OPEN
+            elif target_position == 0:
+                self._state = STATE_CLOSED
+            else:
+                self._state = STATE_UNKNOWN
+
+            self._is_opening = False
+            self._is_closing = False
+
+        self.hass.loop.call_later(move_time, stop_cover_after_travel_time)
 
     def cover_ventilation_tilting_position(self, **kwargs):
         """Move into the ventilation/tilting position."""
@@ -466,3 +528,4 @@ class EleroCover(CoverEntity):
                 f"Transmitter: '{t}' ch: '{self._channel}' "
                 f"unhandled response: '{r}'."
             )
+        self._last_known_position = self._position
