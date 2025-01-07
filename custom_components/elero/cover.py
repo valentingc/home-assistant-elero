@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.3.6"
+__version__ = "3.3.7"
 
 import logging
 
@@ -325,12 +325,16 @@ class EleroCover(CoverEntity):
         target_position = position
         current_position = self._last_known_position
 
+        _LOGGER.debug(f"set_cover_position called with target position: {position}")
+        _LOGGER.debug(f"current_position: {current_position}, travel_time: {self._travel_time}")
+
         if target_position == current_position:
             _LOGGER.info("Target position is the same as the current position. No action needed.")
             return
 
         # Determine direction
         move_time = abs(target_position - current_position) / 100 * self._travel_time
+        _LOGGER.debug(f"calculated move_time: {move_time}s")
         if target_position > current_position:
             self.open_cover()  # Move up
             self._state = STATE_OPENING
@@ -340,6 +344,7 @@ class EleroCover(CoverEntity):
 
         # Schedule to stop the cover after the calculated travel time.
         def stop_cover_after_travel_time():
+            _LOGGER.debug(f"Stopping cover after {move_time}s, final position: {target_position}")
             """Stop the cover after moving for the calculated travel time."""
             self.stop_cover()
             self._position = target_position

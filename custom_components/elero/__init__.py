@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.3.6"
+__version__ = "3.3.7"
 
 import logging
 import os
@@ -358,7 +358,7 @@ class EleroTransmitter(object):
         int_list = self.__get_check_command()
         self._process_command(COMMAND_CHECH_TEXT, int_list, 0, RESPONSE_LENGTH_CHECK)
 
-    def __set_learned_channels(self, resp):
+    def _set_learned_channels(self, resp):
         """Store learned channels."""
         self._learned_channels = dict.fromkeys(resp["chs"])
         chs = " ".join(map(str, list(self._learned_channels.keys())))
@@ -522,8 +522,8 @@ class EleroTransmitter(object):
 
     def _process_command(self, command_text, int_list, channel, resp_length):
         """Ensure the recursive func handling."""
-        int_list.append(self.__calculate_checksum(*int_list))
-        bytes_data = self.__create_serial_data(int_list)
+        int_list.append(self._calculate_checksum(*int_list))
+        bytes_data = self._create_serial_data(int_list)
 
         attempt = 0
         while attempt < 4:
@@ -547,9 +547,9 @@ class EleroTransmitter(object):
                     )
                     # Easy Check.
                     if command_text == COMMAND_CHECH_TEXT:
-                        self.__set_learned_channels(resp)
+                        self._set_learned_channels(resp)
                     else:
-                        self.__process_response(resp)
+                        self._process_response(resp)
                     break
             except serial.serialutil.SerialException as exc:
                 _LOGGER.exception(
@@ -560,7 +560,7 @@ class EleroTransmitter(object):
                 )
                 self.init_serial_port()
 
-    def __process_response(self, resp):
+    def _process_response(self, resp):
         """Read the response form the device."""
         # Reply to the appropriate channel.
         for ch in resp["chs"]:
@@ -618,14 +618,14 @@ class EleroTransmitter(object):
 
         return response
 
-    def __calculate_checksum(self, *args):
+    def _calculate_checksum(self, *args):
         """Calculate checksum.
 
         All the sum of all bytes (Header to CS) must be 0x00.
         """
         return (256 - sum(args)) % 256
 
-    def __create_serial_data(self, int_list):
+    def _create_serial_data(self, int_list):
         """Convert integers to bytes for serial communication."""
         bytes_data = bytes(int_list)
         return bytes_data
@@ -709,8 +709,8 @@ class EleroRemoteTransmitter(EleroTransmitter):
 
     def _process_command(self, command_text, int_list, channel, resp_length):
         """Ensure the recursive func handling."""
-        int_list.append(self.__calculate_checksum(*int_list))
-        bytes_data = self.__create_serial_data(int_list)
+        int_list.append(self._calculate_checksum(*int_list))
+        bytes_data = self._create_serial_data(int_list)
 
         attempt = 0
         while attempt < 4:
@@ -749,9 +749,9 @@ class EleroRemoteTransmitter(EleroTransmitter):
                     )
                     # Easy Check.
                     if command_text == COMMAND_CHECH_TEXT:
-                        self.__set_learned_channels(resp)
+                        self._set_learned_channels(resp)
                     else:
-                        self.__process_response(resp)
+                        self._process_response(resp)
                     break
             except Exception as exc:
                 _LOGGER.exception(
