@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.3.9"
+__version__ = "3.4.0"
 
 import logging
 
@@ -270,7 +270,6 @@ class EleroCover(CoverEntity):
         self._state = STATE_CLOSING
         self._position = POSITION_CLOSED
         self._tilt_position = POSITION_UNDEFINED
-        self._last_known_position = POSITION_CLOSED
         self._start_time = time.time()
 
     def open_cover(self, **kwargs):
@@ -282,7 +281,6 @@ class EleroCover(CoverEntity):
         self._state = STATE_OPENING
         self._position = POSITION_OPEN
         self._tilt_position = POSITION_UNDEFINED
-        self._last_known_position = POSITION_OPEN
         self._start_time = time.time()
 
     def stop_cover(self, **kwargs):
@@ -304,9 +302,7 @@ class EleroCover(CoverEntity):
         self._is_closing = False
         self._is_opening = False
         self._state = STATE_STOPPED
-        self._position = POSITION_UNDEFINED
         self._tilt_position = POSITION_UNDEFINED
-        self._last_known_position = self._position
 
     def set_cover_position(self, **kwargs):
         """Move the cover to a specific position."""
