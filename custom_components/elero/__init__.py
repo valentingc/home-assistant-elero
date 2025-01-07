@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.3.4"
+__version__ = "3.3.5"
 
 import logging
 import os
@@ -299,8 +299,6 @@ class EleroTransmitter(object):
         # Setup the serial connection to the transmitter.
         self._serial = None
         self._learned_channels = {}
-
-        self._threading_lock = threading.Lock()
         
     def init_serial(self):
         """Setup serial connection and get learned channels from the transmitter."""
@@ -671,8 +669,6 @@ class EleroRemoteTransmitter(EleroTransmitter):
     """
     def __init__(self, serial_number, address):
         self._address = address
-        self._connected = False
-        self._reconnect_thread = threading.Thread(target=self._monitor_connection, daemon=True)
         super().__init__(None, serial_number, None, None, None, None)
 
     
@@ -683,15 +679,12 @@ class EleroRemoteTransmitter(EleroTransmitter):
         self.init_serial_port()
         # Get the learned channels from the transmitter.
         if self._serial:
-            self._connected = True
             self.check()
-            if not self._reconnect_thread.is_alive():
-                self._reconnect_thread.start()
 
 
     def init_serial_port(self):
         """Init the serial port to the transmitter."""
-
+        _LOGGER.info(f"Init remote serial port to the transmitter: '{self._serial_number}' on address: '{self._address}'.")
         url = f"socket://{self._address}"
         retries = 0
         while retries < 10:
@@ -701,41 +694,18 @@ class EleroRemoteTransmitter(EleroTransmitter):
                     f"Elero Transmitter Stick is remotely connected to '{self._address}' "
                     f"with serial number: '{self._serial_number}'."
                 )
-                self._connected = True
                 return
-            except serial.serialutil.SerialException as exc:
+            except Exception as exc:
                 retries += 1
                 _LOGGER.exception(
                     f"Failed to connect to remote serial port '{url}' (attempt {retries}): {exc}"
                 )
                 time.sleep(2 ** retries)
-        self._connected = False
 
     def log_out_serial_port_details(self):
         """Log out the details of the serial connection."""
         _LOGGER.debug(f"Remote Transmitter stick on address '{self._address}'.")
 
-    def close_serial(self):
-        """Close the serial connection of the remote transmitter."""
-        with self._threading_lock:
-            self._connected = False
-            if self._serial and self._serial.is_open:
-                self._serial.close()
-
-    def _monitor_connection(self):
-        """Monitor the connection and attempt to reconnect if dropped."""
-        while True:
-            with self._threading_lock:
-                if not self._connected or not self._serial or not self._serial.is_open:
-                    _LOGGER.error(f"Connection to {self._address} lost. Attempting to reconnect.")
-                    self.init_serial_port()
-                else:
-                    # periodically check if still connected
-                    try:
-                        self._serial.in_waiting  # keep-alive check
-                    except serial.serialutil.SerialException:
-                        self._connected = False
-            time.sleep(5)  # check more frequently
 
     def __process_command(self, command_text, int_list, channel, resp_length):
         """Ensure the recursive func handling."""
@@ -746,11 +716,26 @@ class EleroRemoteTransmitter(EleroTransmitter):
         while attempt < 4:
             attempt += 1
             try:
+                _LOGGER.debug(
+                        f"Trying to send '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                    )
                 with self._threading_lock:
+                    _LOGGER.debug(
+                        f"Lock acquired for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                    )
                     if not self._serial.is_open:
+                        _LOGGER.debug(
+                            f"Serial port is closed, opening it for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                        )
                         self._serial.open()
                     self._serial.write(bytes_data)
+                    _LOGGER.debug(
+                        f"Command '{command_text}' sent to the transmitter, attempt: '{attempt}'."
+                    )
                     ser_resp = self._serial.read(resp_length)
+                    _LOGGER.debug(
+                        f"Received response from the transmitter, attempt: '{attempt}'."
+                    )
                 if ser_resp:
                     resp = self.__parse_response(ser_resp, channel)
                     rsp = resp["status"]
@@ -768,8 +753,7 @@ class EleroRemoteTransmitter(EleroTransmitter):
                     else:
                         self.__process_response(resp)
                     break
-            except serial.serialutil.SerialException as exc:
-                self._connected = False  # force reconnection
+            except Exception as exc:
                 _LOGGER.exception(
                     f"Problem communicating with transmitter: "
                     f"'{self._serial_number}' send command: '{command_text}' "
