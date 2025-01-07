@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.3.5"
+__version__ = "3.3.6"
 
 import logging
 import os
@@ -356,7 +356,7 @@ class EleroTransmitter(object):
         Should be received an answer "Easy Confirm" with in 1 second.
         """
         int_list = self.__get_check_command()
-        self.__process_command(COMMAND_CHECH_TEXT, int_list, 0, RESPONSE_LENGTH_CHECK)
+        self._process_command(COMMAND_CHECH_TEXT, int_list, 0, RESPONSE_LENGTH_CHECK)
 
     def __set_learned_channels(self, resp):
         """Store learned channels."""
@@ -396,7 +396,7 @@ class EleroTransmitter(object):
         Should be received an answer "Easy Act" with in 4 seconds.
         """
         int_list = self.__get_info_command(channel)
-        self.__process_command(
+        self._process_command(
             COMMAND_INFO_TEXT, int_list, channel, RESPONSE_LENGTH_INFO
         )
 
@@ -417,7 +417,7 @@ class EleroTransmitter(object):
 
         Should be received an answer "Easy Act" with in 4 seconds.
         """
-        self.__process_command(
+        self._process_command(
             PAYLOAD_UP_TEXT,
             self.__get_up_command(channel),
             channel,
@@ -441,7 +441,7 @@ class EleroTransmitter(object):
 
         Should be received an answer "Easy Act" with in 4 seconds.
         """
-        self.__process_command(
+        self._process_command(
             PAYLOAD_DOWN_TEXT,
             self.__get_down_command(channel),
             channel,
@@ -465,7 +465,7 @@ class EleroTransmitter(object):
 
         Should be received an answer "Easy Act" with in 4 seconds.
         """
-        self.__process_command(
+        self._process_command(
             PAYLOAD_STOP_TEXT,
             self.__get_stop_command(channel),
             channel,
@@ -489,7 +489,7 @@ class EleroTransmitter(object):
 
         Should be received an answer "Easy Act" with in 4 seconds.
         """
-        self.__process_command(
+        self._process_command(
             PAYLOAD_INTERMEDIATE_POS_TEXT,
             self.__get_intermediate_command(channel),
             channel,
@@ -513,14 +513,14 @@ class EleroTransmitter(object):
 
         Should be received an answer "Easy Act" with in 4 seconds.
         """
-        self.__process_command(
+        self._process_command(
             PAYLOAD_VENTILATION_POS_TILTING_TEXT,
             self.__get_ventilation_tilting_command(channel),
             channel,
             RESPONSE_LENGTH_SEND,
         )
 
-    def __process_command(self, command_text, int_list, channel, resp_length):
+    def _process_command(self, command_text, int_list, channel, resp_length):
         """Ensure the recursive func handling."""
         int_list.append(self.__calculate_checksum(*int_list))
         bytes_data = self.__create_serial_data(int_list)
@@ -707,7 +707,7 @@ class EleroRemoteTransmitter(EleroTransmitter):
         _LOGGER.debug(f"Remote Transmitter stick on address '{self._address}'.")
 
 
-    def __process_command(self, command_text, int_list, channel, resp_length):
+    def _process_command(self, command_text, int_list, channel, resp_length):
         """Ensure the recursive func handling."""
         int_list.append(self.__calculate_checksum(*int_list))
         bytes_data = self.__create_serial_data(int_list)
