@@ -148,10 +148,16 @@ class EleroCover(CoverEntity, RestoreEntity):
         await super().async_added_to_hass()
         _LOGGER.debug(f"Restoring state for {self.name}")
         state = await self.async_get_last_state()
-        if state:
-            self._position = state.attributes.get("current_position", None)
-            self._last_known_position = state.attributes.get("last_known_position", None)
-            _LOGGER.debug(f"Restored state: {state.state}")
+        if not state:
+            return
+        self._position = state.attributes.get("current_position", 50)
+        self._last_known_position = state.attributes.get("last_known_position", 50)
+        self._is_closing = state.attributes.get("is_closing", False)
+        self._is_opening = state.attributes.get("is_opening", False)
+        self._closed = state.attributes.get("is_closed", False)
+        self._tilt_position = state.attributes.get("current_tilt_position", 50)
+        self._elero_state = state.attributes.get(ATTR_ELERO_STATE, None)
+        _LOGGER.warning(f"Restored state: {state.state}")
 
     def __init__(
         self, hass, transmitter, name, channel, device_class, supported_features, travel_time
@@ -282,6 +288,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._position = POSITION_CLOSED
         self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
+        self.async_schedule_update_ha_state(True)
 
     def open_cover(self, **kwargs):
         """Open the cover."""
@@ -293,6 +300,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._position = POSITION_OPEN
         self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
+        self.async_schedule_update_ha_state(True)
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
@@ -314,6 +322,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_opening = False
         self._state = STATE_STOPPED
         self._tilt_position = POSITION_UNDEFINED
+        self.async_schedule_update_ha_state(True)
 
     def set_cover_position(self, **kwargs):
         """Move the cover to a specific position."""
@@ -368,6 +377,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_opening = False
             self._is_closing = False
 
+        self.async_schedule_update_ha_state(True)
         self.hass.loop.call_later(move_time, stop_cover_after_travel_time)
 
     def cover_ventilation_tilting_position(self, **kwargs):
