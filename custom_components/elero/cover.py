@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.8"
+__version__ = "3.4.9"
 
 import logging
 
@@ -287,7 +287,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_opening = False
         self._state = STATE_CLOSING
         self._start_time = time.time()
-        self._last_known_position = self._position
 
         _LOGGER.debug(f"Starting to close cover. Initial position: {self._position}")
 
@@ -303,7 +302,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_opening = True
         self._state = STATE_OPENING
         self._start_time = time.time()
-        self._last_known_position = self._position
 
         _LOGGER.debug(f"Starting to open cover. Initial position: {self._position}")
 
@@ -321,6 +319,7 @@ class EleroCover(CoverEntity, RestoreEntity):
 
         delta_position = (elapsed_time / self._travel_time) * 100
         _LOGGER.debug(f"Delta position: {delta_position}")
+        _LOGGER.debug(f"Last known position: {self._last_known_position}")
 
         if self._is_opening:
             new_position = min(self._last_known_position + delta_position, 100)
@@ -355,7 +354,9 @@ class EleroCover(CoverEntity, RestoreEntity):
             _LOGGER.error("Cannot set position because the last known position is unavailable.")
             return
 
+
         target_position = position
+        self._last_known_position = self._position
         current_position = self._last_known_position
 
         _LOGGER.debug(f"set_cover_position called with target position: {position}")
@@ -469,6 +470,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = STATE_OPEN
             self._position = POSITION_OPEN
             self._tilt_position = POSITION_UNDEFINED
+            self._last_known_position = POSITION_OPEN
         elif self._response["status"] == INFO_BOTTOM_POSITION_STOP:
             self._closed = True
             self._is_closing = False
@@ -476,6 +478,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = STATE_CLOSED
             self._position = POSITION_CLOSED
             self._tilt_position = POSITION_UNDEFINED
+            self._last_known_position = POSITION_CLOSED
         elif self._response["status"] == INFO_INTERMEDIATE_POSITION_STOP:
             self._closed = False
             self._is_closing = False
