@@ -279,6 +279,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_closing = True
         self._is_opening = False
         self._state = STATE_CLOSING
+        self._position = POSITION_CLOSED
         self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
 
@@ -289,26 +290,24 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_closing = False
         self._is_opening = True
         self._state = STATE_OPENING
+        self._position = POSITION_OPEN
         self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
-        do_not_override_position = kwargs.get("doNotOverridePosition", False)
         self._transmitter.stop(self._channel)
 
         elapsed_time = time.time() - self._start_time if self._start_time else 0
-        _LOGGER.debug(f"Elapsed time: {elapsed_time}s")
         self._start_time = None
 
-        if not do_not_override_position:
-            delta_position = (elapsed_time / self._travel_time) * 100
-            if self._is_opening:
-                self._position += delta_position
-            elif self._is_closing:
-                self._position -= delta_position 
-            self._position = max(0, min(100, self._position))
-            self._last_known_position = self._position
+        delta_position = (elapsed_time / self._travel_time) * 100
+        if self._is_opening:
+            self._position += delta_position
+        elif self._is_closing:
+            self._position -= delta_position 
+        self._position = max(0, min(100, self._position))
+        self._last_known_position = self._position
 
         self._closed = False
         self._is_closing = False
@@ -344,31 +343,27 @@ class EleroCover(CoverEntity, RestoreEntity):
         move_time = abs(target_position - current_position) / 100 * self._travel_time
         _LOGGER.debug(f"calculated move_time: {move_time}s")
         if target_position > current_position:
-            self.open_cover()
+            self.open_cover()  # Move up
             self._state = STATE_OPENING
         else:
-            self.close_cover()
+            self.close_cover()  # Move down
             self._state = STATE_CLOSING
-
-        self._position = target_position
 
         # Schedule to stop the cover after the calculated travel time.
         def stop_cover_after_travel_time():
             _LOGGER.debug(f"Stopping cover after {move_time}s, final position: {target_position}")
             """Stop the cover after moving for the calculated travel time."""
-            self.stop_cover(doNotOverridePosition=True)
-            
+            self.stop_cover()
+            self._position = target_position
             self._last_known_position = target_position
+
             # Update the state based on the final position
             if target_position == 100:
                 self._state = STATE_OPEN
             elif target_position == 0:
                 self._state = STATE_CLOSED
             else:
-                if target_position > current_position:
-                    self._state = STATE_OPEN
-                else:
-                    self._state = STATE_CLOSED
+                self._state = STATE_UNKNOWN
 
             self._is_opening = False
             self._is_closing = False
