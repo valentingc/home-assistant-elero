@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.3"
+__version__ = "3.4.4"
 
 import logging
 
@@ -288,7 +288,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._position = POSITION_CLOSED
         self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
-        self.async_schedule_update_ha_state(True)
 
     def open_cover(self, **kwargs):
         """Open the cover."""
@@ -300,7 +299,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._position = POSITION_OPEN
         self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
-        self.async_schedule_update_ha_state(True)
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
@@ -322,7 +320,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_opening = False
         self._state = STATE_STOPPED
         self._tilt_position = POSITION_UNDEFINED
-        self.async_schedule_update_ha_state(True)
 
     def set_cover_position(self, **kwargs):
         """Move the cover to a specific position."""
@@ -377,7 +374,6 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_opening = False
             self._is_closing = False
 
-        self.async_schedule_update_ha_state(True)
         self.hass.loop.call_later(move_time, stop_cover_after_travel_time)
 
     def cover_ventilation_tilting_position(self, **kwargs):
