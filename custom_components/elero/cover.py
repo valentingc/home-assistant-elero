@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.13"
+__version__ = "3.4.14"
 
 import logging
 
@@ -490,8 +490,8 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._last_known_position = POSITION_CLOSED
         elif self._response["status"] == INFO_INTERMEDIATE_POSITION_STOP:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
