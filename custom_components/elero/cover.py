@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.4"
+__version__ = "3.4.5"
 
 import logging
 
@@ -354,6 +354,9 @@ class EleroCover(CoverEntity, RestoreEntity):
         else:
             self.close_cover()  # Move down
             self._state = STATE_CLOSING
+
+        self._position = target_position
+        self._last_known_position = target_position
 
         # Schedule to stop the cover after the calculated travel time.
         def stop_cover_after_travel_time():
