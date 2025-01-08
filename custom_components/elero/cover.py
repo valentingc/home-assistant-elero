@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.5"
+__version__ = "3.4.6"
 
 import logging
 
@@ -285,8 +285,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_closing = True
         self._is_opening = False
         self._state = STATE_CLOSING
-        self._position = POSITION_CLOSED
-        self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
 
     def open_cover(self, **kwargs):
@@ -296,8 +294,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_closing = False
         self._is_opening = True
         self._state = STATE_OPENING
-        self._position = POSITION_OPEN
-        self._tilt_position = POSITION_UNDEFINED
         self._start_time = time.time()
 
     def stop_cover(self, **kwargs):
@@ -309,13 +305,12 @@ class EleroCover(CoverEntity, RestoreEntity):
 
         delta_position = (elapsed_time / self._travel_time) * 100
         if self._is_opening:
-            self._position += delta_position
+            self._position = min(self._last_known_position + delta_position, 100)
         elif self._is_closing:
-            self._position -= delta_position 
-        self._position = max(0, min(100, self._position))
+            self._position = max(self._last_known_position - delta_position, 0)
         self._last_known_position = self._position
 
-        self._closed = False
+        self._closed = self._position == 0
         self._is_closing = False
         self._is_opening = False
         self._state = STATE_STOPPED
@@ -356,8 +351,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = STATE_CLOSING
 
         self._position = target_position
-        self._last_known_position = target_position
-
+        
         # Schedule to stop the cover after the calculated travel time.
         def stop_cover_after_travel_time():
             _LOGGER.debug(f"Stopping cover after {move_time}s, final position: {target_position}")
