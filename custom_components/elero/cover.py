@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.11"
+__version__ = "3.4.12"
 
 import logging
 
@@ -273,7 +273,7 @@ class EleroCover(CoverEntity, RestoreEntity):
 
         data["travel_time"] = self._travel_time
         data["last_known_position"] = self._last_known_position
-
+        data["_tmp_position"] = self._tmp_position
         return data
 
     def update(self):
@@ -327,21 +327,19 @@ class EleroCover(CoverEntity, RestoreEntity):
         _LOGGER.debug(f"Delta position: {delta_position}")
         _LOGGER.debug(f"Last known position: {self._last_known_position}")
         _LOGGER.debug(f"Temp position: {self._tmp_position}")
+        
         if self._is_opening:
             new_position = min(self._tmp_position + delta_position, 100)
-            _LOGGER.debug(f"New position: {self._position}")
-            self._position = new_position
-            self._last_known_position = new_position
         elif self._is_closing:
             new_position = max(self._tmp_position - delta_position, 0)
-            _LOGGER.debug(f"New position: {self._position}")
-            self._position = new_position
-            self._last_known_position = new_position
+        else:
+            new_position = self._position  # No change if not opening or closing
 
+        self._position = new_position
+        self._last_known_position = new_position
+        self._tmp_position = new_position
+        
         _LOGGER.debug(f"Updated position: {self._position}")
-
-        self._last_known_position = self._position
-
         self._closed = self._position == 0
         self._is_closing = False
         self._is_opening = False
