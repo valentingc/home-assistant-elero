@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.10"
+__version__ = "3.4.11"
 
 import logging
 
@@ -152,6 +152,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             return
         self._position = state.attributes.get("current_position", 50)
         self._last_known_position = state.attributes.get("last_known_position", 50)
+        self._tmp_position = state.attributes.get("_tmp_position", 50)
         self._is_closing = state.attributes.get("is_closing", False)
         self._is_opening = state.attributes.get("is_opening", False)
         self._closed = state.attributes.get("is_closed", False)
@@ -186,6 +187,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._response = dict()
         self._travel_time = travel_time
         self._last_known_position = None
+        self._tmp_position = None
         self._start_time = None
 
     @property
@@ -287,6 +289,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_opening = False
         self._state = STATE_CLOSING
         self._start_time = time.time()
+        self._tmp_position = self._position
+        self._last_known_position = POSITION_CLOSED
 
         _LOGGER.debug(f"Starting to close cover. Initial position: {self._position}")
 
@@ -302,6 +306,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._is_opening = True
         self._state = STATE_OPENING
         self._start_time = time.time()
+        self._tmp_position = self._position
+        self._last_known_position = POSITION_OPEN
 
         _LOGGER.debug(f"Starting to open cover. Initial position: {self._position}")
 
@@ -320,15 +326,17 @@ class EleroCover(CoverEntity, RestoreEntity):
         delta_position = (elapsed_time / self._travel_time) * 100
         _LOGGER.debug(f"Delta position: {delta_position}")
         _LOGGER.debug(f"Last known position: {self._last_known_position}")
-
+        _LOGGER.debug(f"Temp position: {self._tmp_position}")
         if self._is_opening:
-            new_position = min(self._last_known_position + delta_position, 100)
+            new_position = min(self._tmp_position + delta_position, 100)
             _LOGGER.debug(f"New position: {self._position}")
             self._position = new_position
+            self._last_known_position = new_position
         elif self._is_closing:
-            new_position = max(self._last_known_position - delta_position, 0)
+            new_position = max(self._tmp_position - delta_position, 0)
             _LOGGER.debug(f"New position: {self._position}")
             self._position = new_position
+            self._last_known_position = new_position
 
         _LOGGER.debug(f"Updated position: {self._position}")
 
