@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.6"
+__version__ = "3.4.7"
 
 import logging
 
@@ -280,21 +280,31 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     def close_cover(self, **kwargs):
         """Close the cover."""
+        do_not_set_position = kwargs.get("doNotSetPosition", False)
         self._transmitter.down(self._channel)
         self._closed = False
         self._is_closing = True
         self._is_opening = False
         self._state = STATE_CLOSING
         self._start_time = time.time()
+        self._last_known_position = self._position
+
+        if not do_not_set_position:
+            self._position = 0
 
     def open_cover(self, **kwargs):
         """Open the cover."""
+        do_not_set_position = kwargs.get("doNotSetPosition", False)
         self._transmitter.up(self._channel)
         self._closed = False
         self._is_closing = False
         self._is_opening = True
         self._state = STATE_OPENING
         self._start_time = time.time()
+        self._last_known_position = self._position
+        if not do_not_set_position:
+            self._position = 100
+
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
@@ -340,14 +350,21 @@ class EleroCover(CoverEntity, RestoreEntity):
             _LOGGER.info("Target position is the same as the current position. No action needed.")
             return
 
+        if (position == 100):
+            self.open_cover(doNotSetPosition=False)
+            self._state = STATE_OPENING
+        elif (position == 0):
+            self.close_cover(doNotSetPosition=False)
+            self._state = STATE_CLOSING
+
         # Determine direction
         move_time = abs(target_position - current_position) / 100 * self._travel_time
         _LOGGER.debug(f"calculated move_time: {move_time}s")
         if target_position > current_position:
-            self.open_cover()  # Move up
+            self.open_cover(doNotSetPosition=True)  # Move up
             self._state = STATE_OPENING
         else:
-            self.close_cover()  # Move down
+            self.close_cover(doNotSetPosition=True)  # Move down
             self._state = STATE_CLOSING
 
         self._position = target_position
