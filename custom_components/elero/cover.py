@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.9"
+__version__ = "3.4.10"
 
 import logging
 
@@ -578,4 +578,3 @@ class EleroCover(CoverEntity, RestoreEntity):
                 f"Transmitter: '{t}' ch: '{self._channel}' "
                 f"unhandled response: '{r}'."
             )
-        self._last_known_position = self._position
