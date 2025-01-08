@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.14"
+__version__ = "3.4.15"
 
 import logging
 
@@ -465,25 +465,27 @@ class EleroCover(CoverEntity, RestoreEntity):
     def set_states(self):
         """Set the state of the cover."""
         self._elero_state = self._response["status"]
+        _LOGGER.warning(f"Set state: {self._elero_state}")
+        _LOGGER.warning(f"response['status']: {self._response['status']}")
         if self._response["status"] == INFO_NO_INFORMATION:
             self._closed = None
-            self._is_closing = None
-            self._is_opening = None
+           #self._is_closing = None
+            #self._is_opening = None
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
         elif self._response["status"] == INFO_TOP_POSITION_STOP:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_OPEN
             self._position = POSITION_OPEN
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_OPEN
         elif self._response["status"] == INFO_BOTTOM_POSITION_STOP:
             self._closed = True
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_CLOSED
             self._position = POSITION_CLOSED
             self._tilt_position = POSITION_UNDEFINED
@@ -497,64 +499,64 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._tilt_position = POSITION_INTERMEDIATE
         elif self._response["status"] == INFO_TILT_VENTILATION_POS_STOP:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = True
+            #self._is_closing = False
+           # self._is_opening = True
             self._state = STATE_OPENING
             # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
             self._closed = False
-            self._is_closing = True
-            self._is_opening = False
+            #self._is_closing = True
+            #self._is_opening = False
             self._state = STATE_CLOSING
             # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_MOVING_UP:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = True
+            #self._is_closing = False
+            #self._is_opening = True
             self._state = STATE_OPENING
             # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_MOVING_DOWN:
             self._closed = False
-            self._is_closing = True
-            self._is_opening = False
+            #self._is_closing = True
+            #self._is_opening = False
             self._state = STATE_CLOSING
             # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_UNDEFINED
             # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
             self._closed = False
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
         elif self._response["status"] == INFO_BOTTOM_POS_STOP_WICH_INT_POS:
             self._closed = True
-            self._is_closing = False
-            self._is_opening = False
+            #self._is_closing = False
+            #self._is_opening = False
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
         elif self._response["status"] in (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT):
             self._closed = None
-            self._is_closing = None
-            self._is_opening = None
+            #self._is_closing = None
+            #self._is_opening = None
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
