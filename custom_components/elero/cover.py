@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.7"
+__version__ = "3.4.8"
 
 import logging
 
@@ -289,6 +289,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._start_time = time.time()
         self._last_known_position = self._position
 
+        _LOGGER.debug(f"Starting to close cover. Initial position: {self._position}")
+
         if not do_not_set_position:
             self._position = 0
 
@@ -302,9 +304,11 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._state = STATE_OPENING
         self._start_time = time.time()
         self._last_known_position = self._position
+
+        _LOGGER.debug(f"Starting to open cover. Initial position: {self._position}")
+
         if not do_not_set_position:
             self._position = 100
-
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
@@ -313,11 +317,22 @@ class EleroCover(CoverEntity, RestoreEntity):
         elapsed_time = time.time() - self._start_time if self._start_time else 0
         self._start_time = None
 
+        _LOGGER.debug(f"Elapsed time: {elapsed_time}s")
+
         delta_position = (elapsed_time / self._travel_time) * 100
+        _LOGGER.debug(f"Delta position: {delta_position}")
+
         if self._is_opening:
-            self._position = min(self._last_known_position + delta_position, 100)
+            new_position = min(self._last_known_position + delta_position, 100)
+            _LOGGER.debug(f"New position: {self._position}")
+            self._position = new_position
         elif self._is_closing:
-            self._position = max(self._last_known_position - delta_position, 0)
+            new_position = max(self._last_known_position - delta_position, 0)
+            _LOGGER.debug(f"New position: {self._position}")
+            self._position = new_position
+
+        _LOGGER.debug(f"Updated position: {self._position}")
+
         self._last_known_position = self._position
 
         self._closed = self._position == 0
