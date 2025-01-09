@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.16"
+__version__ = "3.4.17"
 
 import logging
 
@@ -304,9 +304,16 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._last_known_position = POSITION_OPEN
 
         _LOGGER.debug(f"Starting to open cover. Initial position: {self._position}")
-
         if not do_not_set_position:
             self._position = 100
+
+                # Schedule to stop the cover after the calculated travel time.
+        def update_info_after_traveltime():
+            _LOGGER.debug(f"Updating cover info after travel time ({self._travel_time}s)")
+            """Updating cover info."""
+            self.update()
+  
+        self.hass.loop.call_later(self._travel_time, update_info_after_traveltime)
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
@@ -363,17 +370,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             _LOGGER.debug(f"Stopping cover after {move_time}s, final position: {target_position}")
             """Stop the cover after moving for the calculated travel time."""
             self.stop_cover()
-            #self._position = target_position
-            #self._last_known_position = target_position
-
-            # Update the state based on the final position
-            #if target_position == 100:
-            #    self._state = STATE_OPEN
-            #elif target_position == 0:
-            #    self._state = STATE_CLOSED
-            #else:
-            #    self._state = STATE_UNKNOWN
-
+  
         self.hass.loop.call_later(move_time, stop_cover_after_travel_time)
 
     def cover_ventilation_tilting_position(self, **kwargs):
@@ -449,19 +446,19 @@ class EleroCover(CoverEntity, RestoreEntity):
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_INTERMEDIATE
+            self._position = POSITION_OPEN
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_INTERMEDIATE
+            self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_MOVING_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_INTERMEDIATE
+            self._position = POSITION_OPEN
         elif self._response["status"] == INFO_MOVING_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_INTERMEDIATE
+            self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
             # Calculate position based on elapsed time
             elapsed_time = time.time() - self._start_time if self._start_time else 0
