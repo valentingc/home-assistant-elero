@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.17"
+__version__ = "3.4.18"
 
 import logging
 
@@ -189,6 +189,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._last_known_position = None
         self._tmp_position = None
         self._start_time = None
+        self._last_operation = None
 
     @property
     def unique_id(self):
@@ -288,11 +289,13 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._start_time = time.time()
         self._tmp_position = float(self._position)
         self._last_known_position = POSITION_CLOSED
+        self._last_operation = "close"
 
         _LOGGER.debug(f"Starting to close cover. Initial position: {self._position}")
 
         if not do_not_set_position:
             self._position = 0
+        self.hass.loop.call_later(self._travel_time, self.update)
 
     def open_cover(self, **kwargs):
         """Open the cover."""
@@ -302,24 +305,21 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._start_time = time.time()
         self._tmp_position = float(self._position)
         self._last_known_position = POSITION_OPEN
+        self._last_operation = "open"
 
         _LOGGER.debug(f"Starting to open cover. Initial position: {self._position}")
         if not do_not_set_position:
             self._position = 100
 
-                # Schedule to stop the cover after the calculated travel time.
-        def update_info_after_traveltime():
-            _LOGGER.debug(f"Updating cover info after travel time ({self._travel_time}s)")
-            """Updating cover info."""
-            self.update()
-  
-        self.hass.loop.call_later(self._travel_time, update_info_after_traveltime)
+        self.hass.loop.call_later(self._travel_time, self.update)
 
     def stop_cover(self, **kwargs):
         """Stop the cover."""
         self._transmitter.stop(self._channel)
         self._state = STATE_STOPPED
         self._start_time = None
+        self._last_operation = "stop"        
+
 
     def set_cover_position(self, **kwargs):
         """Move the cover to a specific position."""
@@ -338,6 +338,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         target_position = position
         self._last_known_position = self._position
         current_position = self._last_known_position
+        self._last_operation = "set_position"
 
         _LOGGER.debug(f"set_cover_position called with target position: {position}")
         _LOGGER.debug(f"current_position: {current_position}, travel_time: {self._travel_time}")
@@ -356,6 +357,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         # Determine direction
         move_time = abs(target_position - current_position) / 100 * self._travel_time
         _LOGGER.debug(f"calculated move_time: {move_time}s")
+        self.hass.loop.call_later(move_time, self.update)
+
         if target_position > current_position:
             self.open_cover(doNotSetPosition=True)  # Move up
             self._state = STATE_OPENING
@@ -379,6 +382,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._state = STATE_TILT_VENTILATION
         self._position = POSITION_TILT_VENTILATION
         self._tilt_position = POSITION_TILT_VENTILATION
+        self._last_operation = "ventilation_tilting"
 
     def cover_intermediate_position(self, **kwargs):
         """Move into the intermediate position."""
@@ -386,6 +390,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._state = STATE_INTERMEDIATE
         self._position = POSITION_INTERMEDIATE
         self._tilt_position = POSITION_INTERMEDIATE
+        self._last_operation = "intermediate"
 
     def close_cover_tilt(self, **kwargs):
         """Close the cover tilt."""
@@ -446,19 +451,25 @@ class EleroCover(CoverEntity, RestoreEntity):
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_OPEN
+            if self._last_operation != "set_position":
+                self._position = POSITION_OPEN
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_CLOSED
+            if self._last_operation != "set_position":
+                self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_MOVING_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_OPEN
+            if self._last_operation != "set_position":
+                self._position = POSITION_OPEN
         elif self._response["status"] == INFO_MOVING_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
-            self._position = POSITION_CLOSED
+
+            if self._last_operation != "set_position":
+                self._position = POSITION_CLOSED
+
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
             # Calculate position based on elapsed time
             elapsed_time = time.time() - self._start_time if self._start_time else 0
@@ -527,3 +538,4 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._closed = self._position == 0
         self._is_closing = self._state == STATE_CLOSING
         self._is_opening = self._state == STATE_OPENING
+        self._last_operation = None

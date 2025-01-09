@@ -1,6 +1,6 @@
 {
     "domain": "elero",
-    "version": "3.4.17",
+    "version": "3.4.18",
     "name": "Elero",
     "documentation": "https://github.com/W00D00/home-assistant-elero",
     "dependencies": [],
