@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.15"
+__version__ = "3.4.16"
 
 import logging
 
@@ -284,9 +284,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         """Close the cover."""
         do_not_set_position = kwargs.get("doNotSetPosition", False)
         self._transmitter.down(self._channel)
-        self._closed = False
-        self._is_closing = True
-        self._is_opening = False
         self._state = STATE_CLOSING
         self._start_time = time.time()
         self._tmp_position = float(self._position)
@@ -301,9 +298,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         """Open the cover."""
         do_not_set_position = kwargs.get("doNotSetPosition", False)
         self._transmitter.up(self._channel)
-        self._closed = False
-        self._is_closing = False
-        self._is_opening = True
         self._state = STATE_OPENING
         self._start_time = time.time()
         self._tmp_position = float(self._position)
@@ -317,37 +311,8 @@ class EleroCover(CoverEntity, RestoreEntity):
     def stop_cover(self, **kwargs):
         """Stop the cover."""
         self._transmitter.stop(self._channel)
-
-        elapsed_time = time.time() - self._start_time if self._start_time else 0
-        self._start_time = None
-
-        _LOGGER.debug(f"Elapsed time: {elapsed_time}s")
-
-        delta_position = float(elapsed_time / self._travel_time) * 100
-        _LOGGER.debug(f"Current position: {self._position}")
-        _LOGGER.debug(f"Delta position: {delta_position}")
-        _LOGGER.debug(f"Last known position: {self._last_known_position}")
-        _LOGGER.debug(f"Temp position: {self._tmp_position}")
-        _LOGGER.debug(f"Is opening: {self._is_opening}")
-        _LOGGER.debug(f"Is closing: {self._is_closing}")
-        
-        if self._is_opening:
-            new_position = min(self._tmp_position + delta_position, 100)
-        elif self._is_closing:
-            new_position = max(self._tmp_position - delta_position, 0)
-        else:
-            new_position = self._position  # No change if not opening or closing
-
-        self._position = new_position
-        self._last_known_position = new_position
-        self._tmp_position = new_position
-        
-        _LOGGER.debug(f"Updated position: {self._position}")
-        self._closed = self._position == 0
-        self._is_closing = False
-        self._is_opening = False
         self._state = STATE_STOPPED
-        self._tilt_position = POSITION_UNDEFINED
+        self._start_time = None
 
     def set_cover_position(self, **kwargs):
         """Move the cover to a specific position."""
@@ -362,7 +327,6 @@ class EleroCover(CoverEntity, RestoreEntity):
         if self._last_known_position is None:
             _LOGGER.error("Cannot set position because the last known position is unavailable.")
             return
-
 
         target_position = position
         self._last_known_position = self._position
@@ -399,28 +363,22 @@ class EleroCover(CoverEntity, RestoreEntity):
             _LOGGER.debug(f"Stopping cover after {move_time}s, final position: {target_position}")
             """Stop the cover after moving for the calculated travel time."""
             self.stop_cover()
-            self._position = target_position
-            self._last_known_position = target_position
+            #self._position = target_position
+            #self._last_known_position = target_position
 
             # Update the state based on the final position
-            if target_position == 100:
-                self._state = STATE_OPEN
-            elif target_position == 0:
-                self._state = STATE_CLOSED
-            else:
-                self._state = STATE_UNKNOWN
-
-            self._is_opening = False
-            self._is_closing = False
+            #if target_position == 100:
+            #    self._state = STATE_OPEN
+            #elif target_position == 0:
+            #    self._state = STATE_CLOSED
+            #else:
+            #    self._state = STATE_UNKNOWN
 
         self.hass.loop.call_later(move_time, stop_cover_after_travel_time)
 
     def cover_ventilation_tilting_position(self, **kwargs):
         """Move into the ventilation/tilting position."""
         self._transmitter.ventilation_tilting(self._channel)
-        self._closed = False
-        self._is_closing = False
-        self._is_opening = False
         self._state = STATE_TILT_VENTILATION
         self._position = POSITION_TILT_VENTILATION
         self._tilt_position = POSITION_TILT_VENTILATION
@@ -428,9 +386,6 @@ class EleroCover(CoverEntity, RestoreEntity):
     def cover_intermediate_position(self, **kwargs):
         """Move into the intermediate position."""
         self._transmitter.intermediate(self._channel)
-        self._closed = False
-        self._is_closing = False
-        self._is_opening = False
         self._state = STATE_INTERMEDIATE
         self._position = POSITION_INTERMEDIATE
         self._tilt_position = POSITION_INTERMEDIATE
@@ -440,7 +395,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self.cover_ventilation_tilting_position()
 
     def open_cover_tilt(self, **kwargs):
-        """Open the cover tilt."""
+        """Open the cover tilt.""" 
         self.cover_intermediate_position()
 
     def stop_cover_tilt(self, **kwargs):
@@ -467,96 +422,85 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._elero_state = self._response["status"]
         _LOGGER.warning(f"Set state: {self._elero_state}")
         _LOGGER.warning(f"response['status']: {self._response['status']}")
+
         if self._response["status"] == INFO_NO_INFORMATION:
             self._closed = None
-           #self._is_closing = None
-            #self._is_opening = None
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
         elif self._response["status"] == INFO_TOP_POSITION_STOP:
-            self._closed = False
-            #self._is_closing = False
-            #self._is_opening = False
             self._state = STATE_OPEN
             self._position = POSITION_OPEN
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_OPEN
         elif self._response["status"] == INFO_BOTTOM_POSITION_STOP:
-            self._closed = True
-            #self._is_closing = False
-            #self._is_opening = False
             self._state = STATE_CLOSED
             self._position = POSITION_CLOSED
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_CLOSED
         elif self._response["status"] == INFO_INTERMEDIATE_POSITION_STOP:
-            self._closed = False
-            #self._is_closing = False
-            #self._is_opening = False
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
         elif self._response["status"] == INFO_TILT_VENTILATION_POS_STOP:
-            self._closed = False
-            #self._is_closing = False
-            #self._is_opening = False
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
-            self._closed = False
-            #self._is_closing = False
-           # self._is_opening = True
             self._state = STATE_OPENING
-            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
+            self._position = POSITION_INTERMEDIATE
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
-            self._closed = False
-            #self._is_closing = True
-            #self._is_opening = False
             self._state = STATE_CLOSING
-            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
+            self._position = POSITION_INTERMEDIATE
         elif self._response["status"] == INFO_MOVING_UP:
-            self._closed = False
-            #self._is_closing = False
-            #self._is_opening = True
             self._state = STATE_OPENING
-            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
+            self._position = POSITION_INTERMEDIATE
         elif self._response["status"] == INFO_MOVING_DOWN:
-            self._closed = False
-            #self._is_closing = True
-            #self._is_opening = False
             self._state = STATE_CLOSING
-            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
+            self._position = POSITION_INTERMEDIATE
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
-            self._closed = False
-            #self._is_closing = False
-            #self._is_opening = False
+            # Calculate position based on elapsed time
+            elapsed_time = time.time() - self._start_time if self._start_time else 0
+            self._start_time = None
+
+            _LOGGER.debug(f"Elapsed time: {elapsed_time}s")
+
+            delta_position = float(elapsed_time / self._travel_time) * 100
+            _LOGGER.debug(f"Current position: {self._position}")
+            _LOGGER.debug(f"Delta position: {delta_position}")
+            _LOGGER.debug(f"Last known position: {self._last_known_position}")
+            _LOGGER.debug(f"Temp position: {self._tmp_position}")
+            _LOGGER.debug(f"Is opening: {self._is_opening}")
+            _LOGGER.debug(f"Is closing: {self._is_closing}")
+            
+            if self._is_opening:
+                new_position = min(self._tmp_position + delta_position, 100)
+            elif self._is_closing:
+                new_position = max(self._tmp_position - delta_position, 0)
+            else:
+                new_position = self._position  # No change if not opening or closing
+
+            self._position = new_position
+            self._last_known_position = new_position
+            self._tmp_position = new_position
+            
+            _LOGGER.debug(f"Updated position: {self._position}")
+
             self._state = STATE_UNDEFINED
-            # self._position = POSITION_UNDEFINED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
-            self._closed = False
-            #self._is_closing = False
-            #self._is_opening = False
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
         elif self._response["status"] == INFO_BOTTOM_POS_STOP_WICH_INT_POS:
-            self._closed = True
-            #self._is_closing = False
-            #self._is_opening = False
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
         elif self._response["status"] in (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT):
-            self._closed = None
-            #self._is_closing = None
-            #self._is_opening = None
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
@@ -565,21 +509,14 @@ class EleroCover(CoverEntity, RestoreEntity):
             _LOGGER.error(
                 f"Transmitter: '{t}' ch: '{self._channel}'  error response: '{r}'."
             )
-
         elif self._response["status"] in (
             INFO_SWITCHING_DEVICE_SWITCHED_ON,
             INFO_SWITCHING_DEVICE_SWITCHED_OFF,
         ):
-            self._closed = None
-            self._is_closing = None
-            self._is_opening = None
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
         else:
-            self._closed = None
-            self._is_closing = None
-            self._is_opening = None
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
@@ -589,3 +526,7 @@ class EleroCover(CoverEntity, RestoreEntity):
                 f"Transmitter: '{t}' ch: '{self._channel}' "
                 f"unhandled response: '{r}'."
             )
+
+        self._closed = self._position == 0
+        self._is_closing = self._state == STATE_CLOSING
+        self._is_opening = self._state == STATE_OPENING
