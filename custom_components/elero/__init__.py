@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.4.19"
+__version__ = "3.4.20"
 
 import logging
 import os

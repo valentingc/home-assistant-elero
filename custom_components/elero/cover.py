@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.19"
+__version__ = "3.4.20"
 
 import logging
 
@@ -430,25 +430,30 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
+            self._last_operation = None
         elif self._response["status"] == INFO_TOP_POSITION_STOP:
             self._state = STATE_OPEN
             self._position = POSITION_OPEN
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_OPEN
+            self._last_operation = None
         elif self._response["status"] == INFO_BOTTOM_POSITION_STOP:
             self._state = STATE_CLOSED
             self._position = POSITION_CLOSED
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_CLOSED
+            self._last_operation = None
         elif self._response["status"] == INFO_INTERMEDIATE_POSITION_STOP:
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
             self._last_known_position = POSITION_CLOSED
+            self._last_operation = None
         elif self._response["status"] == INFO_TILT_VENTILATION_POS_STOP:
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
+            self._last_operation = None
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
@@ -467,10 +472,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         elif self._response["status"] == INFO_MOVING_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
-
             if self._last_operation != "set_position":
                 self._position = POSITION_CLOSED
-
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
             # Calculate position based on elapsed time
             elapsed_time = time.time() - self._start_time if self._start_time else 0
@@ -496,19 +499,21 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._position = new_position
             self._last_known_position = new_position
             self._tmp_position = new_position
-            
             _LOGGER.debug(f"Updated position: {self._position}")
 
             self._state = new_position == 0 and STATE_CLOSED or new_position == 100 and STATE_OPEN or STATE_STOPPED
             self._tilt_position = POSITION_UNDEFINED
+            self._last_operation = None
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
+            self._last_operation = None
         elif self._response["status"] == INFO_BOTTOM_POS_STOP_WICH_INT_POS:
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
+            self._last_operation = None
         elif self._response["status"] in (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT):
             self._state = STATE_UNKNOWN
             self._position = None
@@ -539,4 +544,3 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._closed = self._position == 0
         self._is_closing = self._state == STATE_CLOSING
         self._is_opening = self._state == STATE_OPENING
-        self._last_operation = None
