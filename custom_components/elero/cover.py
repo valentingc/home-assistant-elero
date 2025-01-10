@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.18"
+__version__ = "3.4.19"
 
 import logging
 
@@ -444,6 +444,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
+            self._last_known_position = POSITION_CLOSED
         elif self._response["status"] == INFO_TILT_VENTILATION_POS_STOP:
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
@@ -498,7 +499,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             
             _LOGGER.debug(f"Updated position: {self._position}")
 
-            self._state = STATE_UNDEFINED
+            self._state = new_position == 0 and STATE_CLOSED or new_position == 100 and STATE_OPEN or STATE_STOPPED
             self._tilt_position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
             self._state = STATE_TILT_VENTILATION
