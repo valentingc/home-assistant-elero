@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.21"
+__version__ = "3.4.22"
 
 import logging
 
@@ -431,47 +431,74 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._position = None
             self._tilt_position = None
             self._last_operation = None
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_TOP_POSITION_STOP:
             self._state = STATE_OPEN
             self._position = POSITION_OPEN
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_OPEN
             self._last_operation = None
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_BOTTOM_POSITION_STOP:
             self._state = STATE_CLOSED
             self._position = POSITION_CLOSED
             self._tilt_position = POSITION_UNDEFINED
             self._last_known_position = POSITION_CLOSED
             self._last_operation = None
+            self._closed = True
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_INTERMEDIATE_POSITION_STOP:
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
             self._last_known_position = POSITION_CLOSED
             self._last_operation = None
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_TILT_VENTILATION_POS_STOP:
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
             self._last_operation = None
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = True
             if self._last_operation != "set_position":
                 self._position = POSITION_OPEN
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
+            self._closed = False
+            self._is_closing = True
+            self._is_opening = False
             if self._last_operation != "set_position":
                 self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_MOVING_UP:
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = True
             if self._last_operation != "set_position":
                 self._position = POSITION_OPEN
         elif self._response["status"] == INFO_MOVING_DOWN:
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
+            self._closed = False
+            self._is_closing = True
+            self._is_opening = False
             if self._last_operation != "set_position":
                 self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
@@ -504,20 +531,32 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = new_position == 0 and STATE_CLOSED or new_position == 100 and STATE_OPEN or STATE_STOPPED
             self._tilt_position = POSITION_UNDEFINED
             self._last_operation = None
+            self._closed = self._position == 0
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
             self._last_operation = None
+            self._closed = False
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] == INFO_BOTTOM_POS_STOP_WICH_INT_POS:
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
             self._last_operation = None
+            self._closed = True
+            self._is_closing = False
+            self._is_opening = False
         elif self._response["status"] in (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT):
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
+            self._closed = None
+            self._is_closing = None
+            self._is_opening = None
             t = self._transmitter.get_serial_number()
             r = self._response["status"]
             _LOGGER.error(
@@ -530,10 +569,16 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
+            self._closed = None
+            self._is_closing = None
+            self._is_opening = None
         else:
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
+            self._closed = None
+            self._is_closing = None
+            self._is_opening = None
             t = self._transmitter.get_serial_number()
             r = self._response["status"]
             _LOGGER.error(
@@ -541,6 +586,4 @@ class EleroCover(CoverEntity, RestoreEntity):
                 f"unhandled response: '{r}'."
             )
 
-        self._closed = self._position == 0
-        self._is_closing = self._state == STATE_CLOSING
-        self._is_opening = self._state == STATE_OPENING
+
