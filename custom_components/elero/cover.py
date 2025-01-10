@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.20"
+__version__ = "3.4.21"
 
 import logging
 
@@ -423,7 +423,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         """Set the state of the cover."""
         self._elero_state = self._response["status"]
         _LOGGER.warning(f"Set state: {self._elero_state}")
-        _LOGGER.warning(f"response['status']: {self._response['status']}")
+        _LOGGER.warning(f"Elero response: {self._response}")
 
         if self._response["status"] == INFO_NO_INFORMATION:
             self._closed = None
