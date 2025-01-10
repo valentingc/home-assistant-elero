@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.22"
+__version__ = "3.4.23"
 
 import logging
 
@@ -475,6 +475,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._closed = False
             self._is_closing = False
             self._is_opening = True
+            self._start_time = time.time()
             if self._last_operation != "set_position":
                 self._position = POSITION_OPEN
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
@@ -483,6 +484,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._closed = False
             self._is_closing = True
             self._is_opening = False
+            self._start_time = time.time()
             if self._last_operation != "set_position":
                 self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_MOVING_UP:
@@ -491,6 +493,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._closed = False
             self._is_closing = False
             self._is_opening = True
+            self._start_time = time.time()
             if self._last_operation != "set_position":
                 self._position = POSITION_OPEN
         elif self._response["status"] == INFO_MOVING_DOWN:
@@ -499,6 +502,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._closed = False
             self._is_closing = True
             self._is_opening = False
+            self._start_time = time.time()
             if self._last_operation != "set_position":
                 self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
