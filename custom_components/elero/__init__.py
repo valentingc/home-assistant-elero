@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.4.23"
+__version__ = "3.4.24"
 
 import logging
 import os
@@ -333,15 +333,21 @@ class EleroTransmitter(object):
 
     def close_serial(self):
         """Close the serial connection of the transmitter."""
-        if self._threading_lock.acquire(timeout=5):
-            try:
+        try:
+            if self._threading_lock.acquire(timeout=5):
                 if self._serial and self._serial.is_open:
                     self._serial.close()
-            finally:
-                _LOGGER.debug("Lock released after closing serial connection.")
-                self._threading_lock.release()
-        else:
-            _LOGGER.error("Failed to acquire lock to close serial connection.")
+            else:
+                _LOGGER.error("Failed to acquire lock to close serial connection.")
+        except Exception as exc:
+                _LOGGER.exception(
+                    f"Problem closing serial connection: "
+                    f"exception: '{exc}'"
+                )
+                self.init_serial_port()
+        finally:
+            _LOGGER.debug("Lock released after closing serial connection.")
+            self._threading_lock.release()
 
     def get_transmitter_state(self):
         """Return with transmitter is usable or not."""
@@ -539,31 +545,25 @@ class EleroTransmitter(object):
                     f"Trying to send '{command_text}' command to the transmitter, attempt: '{attempt}'."
                 )
                 if self._threading_lock.acquire(timeout=5):
-                    try:
+                    _LOGGER.debug(
+                        f"Lock acquired for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                    )
+                    if not self._serial.is_open:
                         _LOGGER.debug(
-                            f"Lock acquired for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                            f"Serial port is closed, opening it for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
                         )
-                        if not self._serial.is_open:
-                            _LOGGER.debug(
-                                f"Serial port is closed, opening it for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
-                            )
-                            self._serial.open()
-                        self._serial.write(bytes_data)
-                        _LOGGER.debug(
-                            f"Command '{command_text}' sent to the transmitter, attempt: '{attempt}'."
-                        )
-                        ser_resp = self._serial.read(resp_length)
-                        _LOGGER.debug(
-                            f"Received response from the transmitter, attempt: '{attempt}'."
-                        )
-                    finally:
-                        _LOGGER.debug(
-                            f"Releasing lock after sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
-                        )
-                        self._threading_lock.release()
+                        self._serial.open()
+                    self._serial.write(bytes_data)
+                    _LOGGER.debug(
+                        f"Command '{command_text}' sent to the transmitter, attempt: '{attempt}'."
+                    )
+                    ser_resp = self._serial.read(resp_length)
+                    _LOGGER.debug(
+                        f"Received response from the transmitter, attempt: '{attempt}'."
+                    )      
                 else:
                     _LOGGER.error(f"Failed to acquire lock for sending '{command_text}' command, attempt: '{attempt}'.")
-
+                    
                 if ser_resp:
                     resp = self.__parse_response(ser_resp, channel)
                     rsp = resp["status"]
@@ -589,6 +589,11 @@ class EleroTransmitter(object):
                     f"attempt: '{attempt}' exception: '{exc}'"
                 )
                 self.init_serial_port()
+            finally:
+                _LOGGER.debug(
+                    f"Releasing lock after sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                )
+                self._threading_lock.release()
             time.sleep(2)  # Add a delay between attempts
 
     def _process_response(self, resp):
