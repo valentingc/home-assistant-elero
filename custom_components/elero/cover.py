@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.25"
+__version__ = "3.4.26"
 
 import logging
 
@@ -482,8 +482,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = True
             self._start_time = time.time()
-            if self._last_operation != "set_position":
-                self._position = POSITION_OPEN
+            self._position = POSITION_OPEN
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
             _LOGGER.debug(f"Setting INFO_START_TO_MOVE_DOWN for chs : {self._response["chs"]}")
             self._state = STATE_CLOSING
@@ -492,8 +491,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = True
             self._is_opening = False
             self._start_time = time.time()
-            if self._last_operation != "set_position":
-                self._position = POSITION_CLOSED
+            self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_MOVING_UP:
             _LOGGER.debug(f"Setting INFO_MOVING_UP for chs : {self._response["chs"]}")
             self._state = STATE_OPENING
@@ -502,8 +500,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = True
             self._start_time = time.time()
-            if self._last_operation != "set_position":
-                self._position = POSITION_OPEN
+            self._position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_MOVING_DOWN:
             _LOGGER.debug(f"Setting INFO_MOVING_DOWN for chs : {self._response["chs"]}")
             self._state = STATE_CLOSING
@@ -512,8 +509,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = True
             self._is_opening = False
             self._start_time = time.time()
-            if self._last_operation != "set_position":
-                self._position = POSITION_CLOSED
+            self._position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
             _LOGGER.debug(f"Setting INFO_STOPPED_IN_UNDEFINED_POSITION for chs : {self._response["chs"]}")
             # Calculate position based on elapsed time
