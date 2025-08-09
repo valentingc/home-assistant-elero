@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.26"
+__version__ = "3.4.27"
 
 import logging
 
@@ -426,7 +426,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         _LOGGER.debug(f"Elero response: {self._response}")
 
         if self._response["status"] == INFO_NO_INFORMATION:
-            _LOGGER.debug(f"Setting INFO_NO_INFORMATION for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_NO_INFORMATION for chs : {self._response['chs']}")
             self._closed = None
             self._state = STATE_UNKNOWN
             self._position = None
@@ -436,7 +436,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_TOP_POSITION_STOP:
-            _LOGGER.debug(f"Setting INFO_TOP_POSITION_STOP for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_TOP_POSITION_STOP for chs : {self._response['chs']}")
             self._state = STATE_OPEN
             self._position = POSITION_OPEN
             self._tilt_position = POSITION_UNDEFINED
@@ -446,7 +446,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_BOTTOM_POSITION_STOP:
-            _LOGGER.debug(f"Setting INFO_BOTTOM_POSITION_STOP for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_BOTTOM_POSITION_STOP for chs : {self._response['chs']}")
             self._state = STATE_CLOSED
             self._position = POSITION_CLOSED
             self._tilt_position = POSITION_UNDEFINED
@@ -456,7 +456,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_INTERMEDIATE_POSITION_STOP:
-            _LOGGER.debug(f"Setting INFO_INTERMEDIATE_POSITION_STOP for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_INTERMEDIATE_POSITION_STOP for chs : {self._response['chs']}")
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
@@ -466,7 +466,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_TILT_VENTILATION_POS_STOP:
-            _LOGGER.debug(f"Setting INFO_TILT_VENTILATION_POS_STOP for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_TILT_VENTILATION_POS_STOP for chs : {self._response['chs']}")
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
@@ -475,7 +475,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_START_TO_MOVE_UP:
-            _LOGGER.debug(f"Setting INFO_START_TO_MOVE_UP for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_START_TO_MOVE_UP for chs : {self._response['chs']}")
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
             self._closed = False
@@ -484,7 +484,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._start_time = time.time()
             self._position = POSITION_OPEN
         elif self._response["status"] == INFO_START_TO_MOVE_DOWN:
-            _LOGGER.debug(f"Setting INFO_START_TO_MOVE_DOWN for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_START_TO_MOVE_DOWN for chs : {self._response['chs']}")
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
             self._closed = False
@@ -493,7 +493,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._start_time = time.time()
             self._position = POSITION_CLOSED
         elif self._response["status"] == INFO_MOVING_UP:
-            _LOGGER.debug(f"Setting INFO_MOVING_UP for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_MOVING_UP for chs : {self._response['chs']}")
             self._state = STATE_OPENING
             self._tilt_position = POSITION_UNDEFINED
             self._closed = False
@@ -502,7 +502,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._start_time = time.time()
             self._position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_MOVING_DOWN:
-            _LOGGER.debug(f"Setting INFO_MOVING_DOWN for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_MOVING_DOWN for chs : {self._response['chs']}")
             self._state = STATE_CLOSING
             self._tilt_position = POSITION_UNDEFINED
             self._closed = False
@@ -511,7 +511,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._start_time = time.time()
             self._position = POSITION_UNDEFINED
         elif self._response["status"] == INFO_STOPPED_IN_UNDEFINED_POSITION:
-            _LOGGER.debug(f"Setting INFO_STOPPED_IN_UNDEFINED_POSITION for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_STOPPED_IN_UNDEFINED_POSITION for chs : {self._response['chs']}")
             # Calculate position based on elapsed time
             elapsed_time = time.time() - self._start_time if self._start_time else 0
             self._start_time = None
@@ -545,7 +545,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_TOP_POS_STOP_WICH_TILT_POS:
-            _LOGGER.debug(f"Setting INFO_TOP_POS_STOP_WICH_TILT_POS for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_TOP_POS_STOP_WICH_TILT_POS for chs : {self._response['chs']}")
             self._state = STATE_TILT_VENTILATION
             self._position = POSITION_TILT_VENTILATION
             self._tilt_position = POSITION_TILT_VENTILATION
@@ -554,7 +554,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] == INFO_BOTTOM_POS_STOP_WICH_INT_POS:
-            _LOGGER.debug(f"Setting INFO_BOTTOM_POS_STOP_WICH_INT_POS for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_BOTTOM_POS_STOP_WICH_INT_POS for chs : {self._response['chs']}")
             self._state = STATE_INTERMEDIATE
             self._position = POSITION_INTERMEDIATE
             self._tilt_position = POSITION_INTERMEDIATE
@@ -563,7 +563,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = False
             self._is_opening = False
         elif self._response["status"] in (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT):
-            _LOGGER.debug(f"Setting NFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT for chs : {self._response["chs"]}")
+            _LOGGER.debug(f"Setting INFO_BLOCKING/INFO_OVERHEATED/INFO_TIMEOUT for chs : {self._response['chs']}")
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
@@ -579,7 +579,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             INFO_SWITCHING_DEVICE_SWITCHED_ON,
             INFO_SWITCHING_DEVICE_SWITCHED_OFF,
         ):
-            _LOGGER.debug(f"Setting INFO_SWITCHING_DEVICE_SWITCHED_ON, INFO_SWITCHING_DEVICE_SWITCHED_OFF for chs : {self._response["chs"]}")            
+            _LOGGER.debug(f"Setting INFO_SWITCHING_DEVICE_SWITCHED_ON/OFF for chs : {self._response['chs']}")            
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None
@@ -587,7 +587,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._is_closing = None
             self._is_opening = None
         else:
-            _LOGGER.debug(f"Setting UNKOWN STATUS for chs : {self._response["chs"]}")            
+            _LOGGER.debug(f"Setting UNKNOWN STATUS for chs : {self._response['chs']}")            
             self._state = STATE_UNKNOWN
             self._position = None
             self._tilt_position = None

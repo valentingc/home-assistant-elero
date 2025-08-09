@@ -1,6 +1,6 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.4.26"
+__version__ = "3.4.27"
 
 import logging
 import os
@@ -533,68 +533,115 @@ class EleroTransmitter(object):
         )
 
     def __process_command(self, command_text, int_list, channel, resp_length):
-        """Ensure the recursive func handling."""
+        """Send a command safely with retry, timeouts and proper locking.
+
+        Previous implementation could deadlock if the underlying serial read blocked
+        indefinitely (e.g. remote ser2net socket disruption) while holding the lock.
+        It also attempted to release an un-acquired lock and referenced undefined
+        variables on lock acquisition failure. This version:
+          * Always defines ser_resp per attempt.
+          * Uses context manager style locking to guarantee release.
+          * Implements a bounded read with overall timeout (per attempt) so we never
+            block forever.
+          * Re-initialises the serial port on failure.
+        """
+
         int_list.append(self.__calculate_checksum(*int_list))
         bytes_data = self.__create_serial_data(int_list)
 
-        attempt = 0
-        while attempt < 4:
-            attempt += 1
+        max_attempts = 4
+        for attempt in range(1, max_attempts + 1):
+            ser_resp = b""
             try:
                 _LOGGER.debug(
-                    f"Trying to send '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                    f"Trying to send '{command_text}' command (attempt {attempt}/{max_attempts})."
                 )
-                if self._threading_lock.acquire(timeout=5):
-                    _LOGGER.debug(
-                        f"Lock acquired for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
+                acquired = self._threading_lock.acquire(timeout=5)
+                if not acquired:
+                    _LOGGER.error(
+                        f"Timeout acquiring lock for '{command_text}' (attempt {attempt})."
                     )
-                    if not self._serial.is_open:
-                        _LOGGER.debug(
-                            f"Serial port is closed, opening it for sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
-                        )
-                        self._serial.open()
+                    continue
+                try:
+                    if not self._serial or not self._serial.is_open:
+                        self.init_serial_port()
+                        if not self._serial:
+                            raise serial.serialutil.SerialException(
+                                "Serial port not initialised"
+                            )
+                    # (Re)set low timeouts defensively (pyserial may lose them after reconnect)
+                    try:
+                        self._serial.timeout = 2
+                        self._serial.write_timeout = 2
+                    except Exception:  # pragma: no cover
+                        pass
+
                     self._serial.write(bytes_data)
-                    _LOGGER.debug(
-                        f"Command '{command_text}' sent to the transmitter, attempt: '{attempt}'."
+                    ser_resp = self._read_exact(resp_length, overall_timeout=2.5)
+                finally:
+                    self._threading_lock.release()
+
+                if not ser_resp:
+                    _LOGGER.warning(
+                        f"Empty/timeout response for '{command_text}' (attempt {attempt})."
                     )
-                    ser_resp = self._serial.read(resp_length)
-                    _LOGGER.debug(
-                        f"Received response from the transmitter, attempt: '{attempt}'."
-                    )      
+                    self._recover_serial()
+                    continue
+
+                resp = self.__parse_response(ser_resp, channel)
+                rsp = resp.get("status")
+                chs = resp.get("chs")
+                _LOGGER.debug(
+                    f"Sent '{command_text}' to transmitter '{self._serial_number}' ch '{channel}' "
+                    f"cmd: {bytes_data} resp: {ser_resp} status: '{rsp}' chs: '{chs}' attempt: {attempt}."
+                )
+                if command_text == COMMAND_CHECH_TEXT:
+                    self._set_learned_channels(resp)
                 else:
-                    _LOGGER.error(f"Failed to acquire lock for sending '{command_text}' command, attempt: '{attempt}'.")
-                    
-                if ser_resp:
-                    resp = self.__parse_response(ser_resp, channel)
-                    rsp = resp["status"]
-                    chs = resp["chs"]
-                    _LOGGER.debug(
-                        f"Send '{command_text}' command to the transmitter: "
-                        f"'{self._serial_number}' ch: '{channel}' serial command: "
-                        f"'{bytes_data}' serial response: '{ser_resp}' "
-                        f"response: '{rsp}' from ch(s): '{chs}' "
-                        f"attempt: '{attempt}'."
-                    )
-                    # Easy Check.
-                    if command_text == COMMAND_CHECH_TEXT:
-                        self._set_learned_channels(resp)
-                    else:
-                        self._process_response(resp)
-                    break
+                    self._process_response(resp)
+                break  # success
+            except TimeoutError:
+                _LOGGER.warning(
+                    f"Timeout waiting full response for '{command_text}' (attempt {attempt})."
+                )
+                self._recover_serial()
             except Exception as exc:
                 _LOGGER.exception(
-                    f"Problem communicating with transmitter: "
-                    f"'{self._serial_number}' send command: '{command_text}' "
-                    f"ch: '{channel}' serial command: '{bytes_data}' "
-                    f"attempt: '{attempt}' exception: '{exc}'"
+                    f"Error communicating with transmitter '{self._serial_number}' "
+                    f"cmd '{command_text}' ch '{channel}' attempt {attempt}: {exc}"
                 )
-                self.init_serial_port()
-            finally:
-                _LOGGER.debug(
-                    f"Releasing lock after sending '{command_text}' command to the transmitter, attempt: '{attempt}'."
-                )
-                self._threading_lock.release()
-            time.sleep(2)  # Add a delay between attempts
+                self._recover_serial()
+            time.sleep(0.5)  # small backoff between attempts
+
+    def _read_exact(self, expected_len, overall_timeout=2.5):
+        """Read exactly expected_len bytes within overall_timeout, else raise TimeoutError."""
+        if not self._serial:
+            return b""
+        deadline = time.time() + overall_timeout
+        buf = bytearray()
+        while len(buf) < expected_len and time.time() < deadline:
+            chunk = self._serial.read(expected_len - len(buf))
+            if chunk:
+                buf.extend(chunk)
+            else:
+                # No data this cycle; short sleep to avoid busy loop
+                time.sleep(0.05)
+        if len(buf) != expected_len:
+            raise TimeoutError(
+                f"Expected {expected_len} bytes, received {len(buf)} within {overall_timeout}s"
+            )
+        return bytes(buf)
+
+    def _recover_serial(self):
+        """Attempt to recover the serial connection after an error or timeout."""
+        try:
+            if self._serial and self._serial.is_open:
+                try:
+                    self._serial.close()
+                except Exception:  # pragma: no cover
+                    pass
+        finally:
+            self.init_serial_port()
 
     def _process_response(self, resp):
         """Read the response form the device."""
@@ -720,16 +767,17 @@ class EleroRemoteTransmitter(EleroTransmitter):
 
 
     def init_serial_port(self):
-        """Init the serial port to the transmitter."""
+        """Init the serial (socket) port to the transmitter with timeouts to avoid deadlocks."""
 
         url = f"socket://{self._address}"
         # https://pyserial.readthedocs.io/en/latest/url_handlers.html#urls
         try:
-            self._serial = serial.serial_for_url(url)
+            # Explicit timeouts to prevent indefinite blocking reads.
+            self._serial = serial.serial_for_url(url, timeout=2, write_timeout=2)
             _LOGGER.info(
-                    f"Elero Transmitter Stick is remotely connected to '{self._address}' "
-                    f"with serial number: '{self._serial_number}'."
-                )
+                f"Elero Transmitter Stick is remotely connected to '{self._address}' "
+                f"with serial number: '{self._serial_number}'."
+            )
         except Exception as exc:
             _LOGGER.exception(
                 f"Unable to connect to remote serial port '{url}' for serial "

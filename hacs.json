@@ -1,4 +1,5 @@
 {
   "name": "Elero Centero",
-  "render_readme": true
+  "render_readme": true,
+  "version": "3.4.27"
 }
