@@ -1,16 +1,18 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.4.27"
+__version__ = "3.4.28"
 
 import logging
 import os
 import threading
 import time
+from datetime import timedelta
 
 import homeassistant.helpers.config_validation as cv
 import serial
 import voluptuous as vol
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.helpers.event import track_time_interval
 from serial.tools import list_ports
 
 # Python libraries/modules that you would normally install for your component.
@@ -167,6 +169,22 @@ def setup(hass, config):
     ELERO_TRANSMITTERS.discover()
     ELERO_TRANSMITTERS.connect_remote_transmitters(remote_transmitters_config)
 
+    # Watchdog: periodically send a check to keep connection alive / detect stalls
+    def _watchdog(now):  # pylint: disable=unused-argument
+        for t in ELERO_TRANSMITTERS.transmitters.values():
+            # If never had a response yet, skip until first command
+            if t.last_response_ts is None:
+                continue
+            idle = time.time() - t.last_response_ts
+            # 5 minute idle threshold
+            if idle > 300:
+                _LOGGER.debug(
+                    "Watchdog sending Easy Check to '%s' after %.1fs idle", t.get_serial_number(), idle
+                )
+                hass.async_add_executor_job(t.check)
+
+    track_time_interval(hass, _watchdog, timedelta(minutes=2))
+
     def close_serial_ports(event):
         """Close the serial port."""
         ELERO_TRANSMITTERS.close_transmitters()
@@ -299,6 +317,14 @@ class EleroTransmitter(object):
         # Setup the serial connection to the transmitter.
         self._serial = None
         self._learned_channels = {}
+        # Diagnostics
+        self.last_command_ts = None
+        self.last_response_ts = None
+        self.error_count = 0
+        self.timeout_count = 0
+        self.reconnect_count = 0
+        self.checksum_error_count = 0
+        self.consecutive_failures = 0
         
     def init_serial(self):
         """Setup serial connection and get learned channels from the transmitter."""
@@ -563,6 +589,7 @@ class EleroTransmitter(object):
                     )
                     continue
                 try:
+                    self.last_command_ts = time.time()
                     if not self._serial or not self._serial.is_open:
                         self.init_serial_port()
                         if not self._serial:
@@ -599,17 +626,23 @@ class EleroTransmitter(object):
                     self._set_learned_channels(resp)
                 else:
                     self._process_response(resp)
+                self.last_response_ts = time.time()
+                self.consecutive_failures = 0
                 break  # success
             except TimeoutError:
                 _LOGGER.warning(
                     f"Timeout waiting full response for '{command_text}' (attempt {attempt})."
                 )
+                self.timeout_count += 1
+                self.consecutive_failures += 1
                 self._recover_serial()
             except Exception as exc:
                 _LOGGER.exception(
                     f"Error communicating with transmitter '{self._serial_number}' "
                     f"cmd '{command_text}' ch '{channel}' attempt {attempt}: {exc}"
                 )
+                self.error_count += 1
+                self.consecutive_failures += 1
                 self._recover_serial()
             time.sleep(0.5)  # small backoff between attempts
 
@@ -641,6 +674,7 @@ class EleroTransmitter(object):
                 except Exception:  # pragma: no cover
                     pass
         finally:
+            self.reconnect_count += 1
             self.init_serial_port()
 
     def _process_response(self, resp):
@@ -678,6 +712,16 @@ class EleroTransmitter(object):
         response["ch_h"] = self.__get_upper_channel_bits(ser_resp[3])
         response["ch_l"] = self.__get_lower_channel_bits(ser_resp[4])
         response["chs"] = set(response["ch_h"] + response["ch_l"])
+        # Checksum validation: sum including checksum must be 0 mod 256
+        checksum_ok = (sum(ser_resp) % 256) == 0
+        if not checksum_ok:
+            self.checksum_error_count += 1
+            _LOGGER.error(
+                "Checksum error from transmitter '%s' channel '%s' raw %s",
+                self._serial_number,
+                channel,
+                ser_resp,
+            )
         # Easy Confirmed (the answer on Easy Check).
         if resp_length == RESPONSE_LENGTH_CHECK:
             response["cs"] = ser_resp[5]

@@ -1,6 +1,6 @@
 """Support for Elero cover components."""
 
-__version__ = "3.4.27"
+__version__ = "3.4.28"
 
 import logging
 
@@ -275,6 +275,15 @@ class EleroCover(CoverEntity, RestoreEntity):
         data["travel_time"] = self._travel_time
         data["last_known_position"] = self._last_known_position
         data["tmp_position"] = self._tmp_position
+        # Diagnostics from transmitter
+        tx = self._transmitter
+        data["last_command_ts"] = tx.last_command_ts
+        data["last_response_ts"] = tx.last_response_ts
+        data["error_count"] = tx.error_count
+        data["timeout_count"] = tx.timeout_count
+        data["reconnect_count"] = tx.reconnect_count
+        data["checksum_error_count"] = tx.checksum_error_count
+        data["consecutive_failures"] = tx.consecutive_failures
         return data
 
     def update(self):
@@ -322,59 +331,36 @@ class EleroCover(CoverEntity, RestoreEntity):
 
 
     def set_cover_position(self, **kwargs):
-        """Move the cover to a specific position."""
-        position = kwargs.get(ATTR_POSITION)
-
-        # Validate position input
-        if position is None or not (0 <= position <= 100):
-            _LOGGER.error("Invalid position: must be between 0 and 100")
+        """Move the cover to a specific position (best-effort, time-based)."""
+        target = kwargs.get(ATTR_POSITION)
+        if target is None or not 0 <= target <= 100:
+            _LOGGER.error("Invalid position: must be 0..100")
             return
-
-        # Validate current position availability
-        if self._last_known_position is None:
-            _LOGGER.error("Cannot set position because the last known position is unavailable.")
+        current = self._position if self._position is not None else self._last_known_position
+        if current is None:
+            _LOGGER.error("Unknown current position; cannot move relatively.")
             return
-
-        target_position = position
-        self._last_known_position = self._position
-        current_position = self._last_known_position
+        if target == current:
+            return
+        direction_up = target > current
+        move_time = abs(target - current) / 100 * self._travel_time
         self._last_operation = "set_position"
-
-        _LOGGER.debug(f"set_cover_position called with target position: {position}")
-        _LOGGER.debug(f"current_position: {current_position}, travel_time: {self._travel_time}")
-
-        if target_position == current_position:
-            _LOGGER.info("Target position is the same as the current position. No action needed.")
-            return
-
-        if (position == 100):
-            self.open_cover(doNotSetPosition=False)
-            self._state = STATE_OPENING
-        elif (position == 0):
-            self.close_cover(doNotSetPosition=False)
-            self._state = STATE_CLOSING
-
-        # Determine direction
-        move_time = abs(target_position - current_position) / 100 * self._travel_time
-        _LOGGER.debug(f"calculated move_time: {move_time}s")
-        self.hass.loop.call_later(move_time, self.update)
-
-        if target_position > current_position:
-            self.open_cover(doNotSetPosition=True)  # Move up
+        self._tmp_position = float(current)
+        self._last_known_position = current
+        self._start_time = time.time()
+        if direction_up:
+            self.open_cover(doNotSetPosition=True)
             self._state = STATE_OPENING
         else:
-            self.close_cover(doNotSetPosition=True)  # Move down
+            self.close_cover(doNotSetPosition=True)
             self._state = STATE_CLOSING
-
-        self._position = target_position
-        
-        # Schedule to stop the cover after the calculated travel time.
-        def stop_cover_after_travel_time():
-            _LOGGER.debug(f"Stopping cover after {move_time}s, final position: {target_position}")
-            """Stop the cover after moving for the calculated travel time."""
+        self._position = target
+        def finish():
+            _LOGGER.debug(f"Timed move complete -> stopping at target {target}")
             self.stop_cover()
-  
-        self.hass.loop.call_later(move_time, stop_cover_after_travel_time)
+            # Trigger an info update to refresh real state
+            self.hass.loop.call_later(0.1, self.update)
+        self.hass.loop.call_later(move_time, finish)
 
     def cover_ventilation_tilting_position(self, **kwargs):
         """Move into the ventilation/tilting position."""
