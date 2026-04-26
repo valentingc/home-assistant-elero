@@ -359,20 +359,19 @@ class EleroTransmitter(object):
 
     def close_serial(self):
         """Close the serial connection of the transmitter."""
+        acquired = self._threading_lock.acquire(timeout=5)
+        if not acquired:
+            _LOGGER.error("Failed to acquire lock to close serial connection.")
+            return
         try:
-            if self._threading_lock.acquire(timeout=5):
-                if self._serial and self._serial.is_open:
-                    self._serial.close()
-            else:
-                _LOGGER.error("Failed to acquire lock to close serial connection.")
+            if self._serial and self._serial.is_open:
+                self._serial.close()
         except Exception as exc:
-                _LOGGER.exception(
-                    f"Problem closing serial connection: "
-                    f"exception: '{exc}'"
-                )
-                self.init_serial_port()
+            _LOGGER.exception(
+                f"Problem closing serial connection: "
+                f"exception: '{exc}'"
+            )
         finally:
-            _LOGGER.debug("Lock released after closing serial connection.")
             self._threading_lock.release()
 
     def get_transmitter_state(self):
