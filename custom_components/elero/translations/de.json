@@ -1,0 +1,74 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Elero Transmitter",
+                "description": "Wähle, wie der Elero Transmitter Stick verbunden ist.",
+                "data": {
+                    "connection_type": "Verbindungsart"
+                }
+            },
+            "local": {
+                "title": "Lokaler USB-Transmitter",
+                "description": "Wähle den erkannten Elero Stick.",
+                "data": {
+                    "serial_number": "Transmitter"
+                }
+            },
+            "remote": {
+                "title": "Remote (ser2net)",
+                "description": "Adresse (host:port) eines Elero Sticks, der via ser2net angebunden ist.",
+                "data": {
+                    "serial_number": "Seriennummer",
+                    "address": "Adresse (host:port)"
+                }
+            }
+        },
+        "error": {
+            "invalid_input": "Bitte alle Felder ausfüllen."
+        },
+        "abort": {
+            "already_configured": "Dieser Transmitter ist bereits konfiguriert.",
+            "no_sticks_found": "Kein Elero Transmitter Stick auf diesem Host gefunden."
+        }
+    },
+    "config_subentries": {
+        "cover": {
+            "initiate_flow": {
+                "user": "Cover hinzufügen"
+            },
+            "entry_type": "Cover",
+            "step": {
+                "user": {
+                    "title": "Cover hinzufügen",
+                    "description": "Konfiguriere einen Elero-gesteuerten Cover (Jalousie, Rollladen, Markise, …).",
+                    "data": {
+                        "name": "Name",
+                        "channel": "Kanal (1-15)",
+                        "device_class": "Geräteklasse",
+                        "supported_features": "Unterstützte Funktionen",
+                        "travel_time": "Laufzeit (Sekunden für komplettes Auf/Zu)",
+                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)"
+                    }
+                },
+                "reconfigure": {
+                    "title": "Cover bearbeiten",
+                    "data": {
+                        "name": "Name",
+                        "channel": "Kanal (1-15)",
+                        "device_class": "Geräteklasse",
+                        "supported_features": "Unterstützte Funktionen",
+                        "travel_time": "Laufzeit (Sekunden für komplettes Auf/Zu)",
+                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)"
+                    }
+                }
+            }
+        }
+    },
+    "issues": {
+        "deprecated_yaml": {
+            "title": "Elero YAML-Konfiguration ist veraltet",
+            "description": "Die Elero-Konfiguration aus configuration.yaml wurde in einen Config-Entry importiert. Entferne den YAML-Block, sobald du unter Einstellungen → Geräte & Dienste verifiziert hast, dass die Integration korrekt eingerichtet ist."
+        }
+    }
+}

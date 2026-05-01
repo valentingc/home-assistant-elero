@@ -1,0 +1,74 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Elero transmitter",
+                "description": "Choose how the Elero transmitter stick is connected.",
+                "data": {
+                    "connection_type": "Connection type"
+                }
+            },
+            "local": {
+                "title": "Local USB transmitter",
+                "description": "Pick the discovered Elero stick.",
+                "data": {
+                    "serial_number": "Transmitter"
+                }
+            },
+            "remote": {
+                "title": "Remote (ser2net)",
+                "description": "Enter the ser2net address (host:port) of a remote Elero stick.",
+                "data": {
+                    "serial_number": "Serial number",
+                    "address": "Address (host:port)"
+                }
+            }
+        },
+        "error": {
+            "invalid_input": "Please fill in all fields."
+        },
+        "abort": {
+            "already_configured": "This transmitter is already configured.",
+            "no_sticks_found": "No Elero transmitter sticks were detected on this host."
+        }
+    },
+    "config_subentries": {
+        "cover": {
+            "initiate_flow": {
+                "user": "Add cover"
+            },
+            "entry_type": "Cover",
+            "step": {
+                "user": {
+                    "title": "Add cover",
+                    "description": "Configure an Elero-controlled cover (blind, shutter, awning, …).",
+                    "data": {
+                        "name": "Name",
+                        "channel": "Channel (1-15)",
+                        "device_class": "Device class",
+                        "supported_features": "Supported features",
+                        "travel_time": "Travel time (seconds for full open↔close)",
+                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)"
+                    }
+                },
+                "reconfigure": {
+                    "title": "Reconfigure cover",
+                    "data": {
+                        "name": "Name",
+                        "channel": "Channel (1-15)",
+                        "device_class": "Device class",
+                        "supported_features": "Supported features",
+                        "travel_time": "Travel time (seconds for full open↔close)",
+                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)"
+                    }
+                }
+            }
+        }
+    },
+    "issues": {
+        "deprecated_yaml": {
+            "title": "Elero YAML configuration is deprecated",
+            "description": "Configuration of Elero via configuration.yaml has been imported into a config entry. Remove the YAML block when you have verified the integration is set up correctly under Settings → Devices & services."
+        }
+    }
+}

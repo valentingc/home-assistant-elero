@@ -1,9 +1,13 @@
 {
     "domain": "elero",
-    "version": "3.4.28",
     "name": "Elero",
-    "documentation": "https://github.com/W00D00/home-assistant-elero",
+    "version": "4.0.0",
+    "config_flow": true,
+    "iot_class": "local_push",
+    "integration_type": "hub",
+    "documentation": "https://github.com/valentingc/home-assistant-elero",
+    "issue_tracker": "https://github.com/valentingc/home-assistant-elero/issues",
     "dependencies": [],
     "requirements": ["pyserial>=3.4"],
-    "codeowners": ["@W00D00"]
+    "codeowners": ["@valentingc"]
 }

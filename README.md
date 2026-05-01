@@ -269,7 +269,7 @@ Just copy the contents of the `custom_components` folder into the Home Assistant
 Configurate the `/config/configuration.yaml` file and its all linked files like `covers` and `groups`, etc. Restart the Home Assistant.
 
 ## HACS Installation
-You can use [HACS](https://hacs.xyz) to install the custom component. You need to add this repository https://github.com/W00D00/home-assistant-elero as a custom repository in HACS.
+You can use [HACS](https://hacs.xyz) to install the custom component. You need to add this repository https://github.com/valentingc/home-assistant-elero as a custom repository in HACS.
 
 ## Example config files
 Some example files can be found in the `config` folder as a help or starting point.
@@ -296,12 +296,12 @@ It is possible to specify triggers for automation of your covers.
 
 # Report an issue:
 
-Please use the Github Issues section to report a problem or feature request: https://github.com/W00D00/home-assistant-elero/issues/new
+Please use the Github Issues section to report a problem or feature request: https://github.com/valentingc/home-assistant-elero/issues/new
 
 
 # Known issues:
 
-Please see the Issues section: https://github.com/W00D00/home-assistant-elero/issues
+Please see the Issues section: https://github.com/valentingc/home-assistant-elero/issues
 
 # Contribution:
 

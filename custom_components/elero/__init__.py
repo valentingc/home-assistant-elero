@@ -1,6 +1,8 @@
 """Support for Elero electrical drives."""
 
-__version__ = "3.4.28"
+from __future__ import annotations
+
+__version__ = "4.0.0"
 
 import logging
 import os
@@ -11,121 +13,106 @@ from datetime import timedelta
 import homeassistant.helpers.config_validation as cv
 import serial
 import voluptuous as vol
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.helpers.event import track_time_interval
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry, SOURCE_IMPORT
+from homeassistant.const import (
+    CONF_DEVICE_CLASS,
+    CONF_NAME,
+    EVENT_HOMEASSISTANT_STOP,
+)
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
 from serial.tools import list_ports
 
-# Python libraries/modules that you would normally install for your component.
-REQUIREMENTS = ["pyserial>=3.4"]
+from .const import (
+    BIT_8,
+    BYTE_HEADER,
+    BYTE_LENGTH_2,
+    BYTE_LENGTH_4,
+    BYTE_LENGTH_5,
+    COMMAND_CHECH_TEXT,
+    COMMAND_CHECK,
+    COMMAND_INFO,
+    COMMAND_INFO_TEXT,
+    COMMAND_SEND,
+    CONF_BAUDRATE,
+    CONF_BYTESIZE,
+    CONF_CHANNEL,
+    CONF_CONNECTION_TYPE,
+    CONF_PARITY,
+    CONF_REMOTE_TRANSMITTERS,
+    CONF_REMOTE_TRANSMITTERS_ADDRESS,
+    CONF_STOPBITS,
+    CONF_SUPPORTED_FEATURES,
+    CONF_TILT_STEP,
+    CONF_TRANSMITTERS,
+    CONF_TRANSMITTER_SERIAL_NUMBER,
+    CONF_TRAVEL_TIME,
+    CONNECTION_LOCAL,
+    CONNECTION_REMOTE,
+    DEFAULT_BAUDRATE,
+    DEFAULT_BRAND,
+    DEFAULT_BYTESIZE,
+    DEFAULT_PARITY,
+    DEFAULT_PRODUCT,
+    DEFAULT_STOPBITS,
+    DEFAULT_TILT_STEP,
+    DEFAULT_TRAVEL_TIME,
+    DOMAIN,
+    HEX_255,
+    INFO,
+    INFO_UNKNOWN,
+    PAYLOAD_DOWN,
+    PAYLOAD_DOWN_TEXT,
+    PAYLOAD_INTERMEDIATE_POS,
+    PAYLOAD_INTERMEDIATE_POS_TEXT,
+    PAYLOAD_STOP,
+    PAYLOAD_STOP_TEXT,
+    PAYLOAD_UP,
+    PAYLOAD_UP_TEXT,
+    PAYLOAD_VENTILATION_POS_TILTING,
+    PAYLOAD_VENTILATION_POS_TILTING_TEXT,
+    PLATFORMS,
+    RESPONSE_LENGTH_CHECK,
+    RESPONSE_LENGTH_INFO,
+    RESPONSE_LENGTH_SEND,
+    SUBENTRY_TYPE_COVER,
+)
 
-# Other HASS components that should be setup before the platform is loaded.
-DEPENDENCIES = []
+# Re-export status constants so existing imports `from custom_components.elero import INFO_*` keep working.
+from .const import (  # noqa: F401
+    INFO_BLOCKING,
+    INFO_BOTTOM_POSITION_STOP,
+    INFO_BOTTOM_POS_STOP_WICH_INT_POS,
+    INFO_INTERMEDIATE_POSITION_STOP,
+    INFO_MOVING_DOWN,
+    INFO_MOVING_UP,
+    INFO_NO_INFORMATION,
+    INFO_OVERHEATED,
+    INFO_START_TO_MOVE_DOWN,
+    INFO_START_TO_MOVE_UP,
+    INFO_STOPPED_IN_UNDEFINED_POSITION,
+    INFO_SWITCHING_DEVICE_SWITCHED_OFF,
+    INFO_SWITCHING_DEVICE_SWITCHED_ON,
+    INFO_TILT_VENTILATION_POS_STOP,
+    INFO_TIMEOUT,
+    INFO_TOP_POSITION_STOP,
+    INFO_TOP_POS_STOP_WICH_TILT_POS,
+)
+
+REQUIREMENTS = ["pyserial>=3.4"]
+DEPENDENCIES: list[str] = []
 
 _LOGGER = logging.getLogger(__name__)
 
-# values to bit shift.
-BIT_8 = 8
+# Legacy module-level singleton used by the old YAML cover.py path.
+# Modern config-entry path stores transmitters in hass.data[DOMAIN][entry_id].
+ELERO_TRANSMITTERS: "EleroTransmitters | None" = None
 
-# Header for all command.
-BYTE_HEADER = 0xAA
 
-# Command lengths.
-BYTE_LENGTH_2 = 0x02
-BYTE_LENGTH_4 = 0x04
-BYTE_LENGTH_5 = 0x05
-
-# Configs to the serial connection.
-CONF_BAUDRATE = "baudrate"
-CONF_BYTESIZE = "bytesize"
-CONF_PARITY = "parity"
-CONF_STOPBITS = "stopbits"
-CONF_TRANSMITTER_SERIAL_NUMBER = "serial_number"
-CONF_TRANSMITTERS = "transmitters"
-CONF_REMOTE_TRANSMITTERS = "remote_transmitters"
-CONF_REMOTE_TRANSMITTERS_ADDRESS = "address"
-
-# Easy commands.
-COMMAND_CHECK = 0x4A
-COMMAND_CHECH_TEXT = "Easy Check"
-COMMAND_INFO = 0x4E
-COMMAND_INFO_TEXT = "Info"
-COMMAND_SEND = 0x4C
-
-# Default serial info.
-DEFAULT_BRAND = "elero"
-DEFAULT_PRODUCT = "Transmitter Stick"
-
-# Default serial connection details.
-DEFAULT_BAUDRATE = 38400
-DEFAULT_BYTESIZE = serial.EIGHTBITS
-DEFAULT_PARITY = serial.PARITY_NONE
-DEFAULT_STOPBITS = serial.STOPBITS_ONE
-
-# The domain of your component. Equal to the filename of your component.
-DOMAIN = "elero"
-
-# The connected Transmitter devices.
-ELERO_TRANSMITTERS = None
-
-# values to bit shift.
-HEX_255 = 0xFF
-
-# Info to receive response.
-INFO_BLOCKING = "blocking"
-INFO_BOTTOM_POSITION_STOP = "bottom position stop"
-INFO_BOTTOM_POS_STOP_WICH_INT_POS = "bottom position stop wich is intermediate position"
-INFO_INTERMEDIATE_POSITION_STOP = "intermediate position stop"
-INFO_MOVING_DOWN = "moving down"
-INFO_MOVING_UP = "moving up"
-INFO_NO_INFORMATION = "no information"
-INFO_OVERHEATED = "overheated"
-INFO_START_TO_MOVE_DOWN = "start to move down"
-INFO_START_TO_MOVE_UP = "start to move up"
-INFO_STOPPED_IN_UNDEFINED_POSITION = "stopped in undefined position"
-INFO_SWITCHING_DEVICE_SWITCHED_OFF = "switching device switched off"
-INFO_SWITCHING_DEVICE_SWITCHED_ON = "switching device switched on"
-INFO_TILT_VENTILATION_POS_STOP = "tilt ventilation position stop"
-INFO_TIMEOUT = "timeout"
-INFO_TOP_POSITION_STOP = "top position stop"
-INFO_TOP_POS_STOP_WICH_TILT_POS = "top position stop wich is tilt position"
-INFO_UNKNOWN = "unknown response"
-
-INFO = {
-    0x00: INFO_NO_INFORMATION,
-    0x01: INFO_TOP_POSITION_STOP,
-    0x02: INFO_BOTTOM_POSITION_STOP,
-    0x03: INFO_INTERMEDIATE_POSITION_STOP,
-    0x04: INFO_TILT_VENTILATION_POS_STOP,
-    0x05: INFO_BLOCKING,
-    0x06: INFO_OVERHEATED,
-    0x07: INFO_TIMEOUT,
-    0x08: INFO_START_TO_MOVE_UP,
-    0x09: INFO_START_TO_MOVE_DOWN,
-    0x0A: INFO_MOVING_UP,
-    0x0B: INFO_MOVING_DOWN,
-    0x0D: INFO_STOPPED_IN_UNDEFINED_POSITION,
-    0x0E: INFO_TOP_POS_STOP_WICH_TILT_POS,
-    0x0F: INFO_BOTTOM_POS_STOP_WICH_INT_POS,
-    0x10: INFO_SWITCHING_DEVICE_SWITCHED_OFF,
-    0x11: INFO_SWITCHING_DEVICE_SWITCHED_ON,
-}
-
-# Playloads to send.
-PAYLOAD_DOWN = 0x40
-PAYLOAD_DOWN_TEXT = "Down"
-PAYLOAD_INTERMEDIATE_POS = 0x44
-PAYLOAD_INTERMEDIATE_POS_TEXT = "Intermediate position"
-PAYLOAD_STOP = 0x10
-PAYLOAD_STOP_TEXT = "Stop"
-PAYLOAD_UP = 0x20
-PAYLOAD_UP_TEXT = "Up"
-PAYLOAD_VENTILATION_POS_TILTING = 0x24
-PAYLOAD_VENTILATION_POS_TILTING_TEXT = "Tilt/ventilation"
-
-# Easy response lengths.
-RESPONSE_LENGTH_CHECK = 6
-RESPONSE_LENGTH_INFO = 7
-RESPONSE_LENGTH_SEND = 7
+# ── YAML schema (kept for legacy import bridge) ─────────────────────────
 
 ELERO_TRANSMITTER_SCHEMA = vol.Schema(
     {
@@ -140,17 +127,18 @@ ELERO_TRANSMITTER_SCHEMA = vol.Schema(
 ELERO_REMOTE_TRANSMITTER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_TRANSMITTER_SERIAL_NUMBER): str,
-        vol.Required(CONF_REMOTE_TRANSMITTERS_ADDRESS): str
+        vol.Required(CONF_REMOTE_TRANSMITTERS_ADDRESS): str,
     }
 )
 
-# Validation of the user's configuration.
 CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
                 vol.Optional(CONF_TRANSMITTERS): [ELERO_TRANSMITTER_SCHEMA],
-                vol.Optional(CONF_REMOTE_TRANSMITTERS): [ELERO_REMOTE_TRANSMITTER_SCHEMA] 
+                vol.Optional(CONF_REMOTE_TRANSMITTERS): [
+                    ELERO_REMOTE_TRANSMITTER_SCHEMA
+                ],
             }
         ),
     },
@@ -158,155 +146,320 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-def setup(hass, config):
-    """Set up is called when Home Assistant is loading our component."""
-    global ELERO_TRANSMITTERS
-    elero_config = config.get(DOMAIN)
-    transmitters_config = elero_config.get(CONF_TRANSMITTERS)
-    remote_transmitters_config = elero_config.get(CONF_REMOTE_TRANSMITTERS)
+# ── HA setup hooks ──────────────────────────────────────────────────────
 
-    ELERO_TRANSMITTERS = EleroTransmitters(transmitters_config)
-    ELERO_TRANSMITTERS.discover()
-    ELERO_TRANSMITTERS.connect_remote_transmitters(remote_transmitters_config)
 
-    # Watchdog: periodically send a check to keep connection alive / detect stalls
-    def _watchdog(now):  # pylint: disable=unused-argument
-        for t in ELERO_TRANSMITTERS.transmitters.values():
-            # If never had a response yet, skip until first command
-            if t.last_response_ts is None:
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Bridge legacy YAML config into a config entry on first start."""
+    hass.data.setdefault(DOMAIN, {})
+
+    # Stash any legacy `cover: - platform: elero` YAML so that
+    # async_setup_entry can auto-import each cover as a sub-entry of the
+    # matching transmitter. Keyed by serial_number.
+    yaml_covers: dict[str, list[dict]] = {}
+    for platform_conf in config.get("cover") or []:
+        if not isinstance(platform_conf, dict):
+            continue
+        if platform_conf.get("platform") != DOMAIN:
+            continue
+        for _, cov in (platform_conf.get("covers") or {}).items():
+            serial = str(cov.get(CONF_TRANSMITTER_SERIAL_NUMBER, "")).strip()
+            if not serial:
                 continue
-            idle = time.time() - t.last_response_ts
-            # 5 minute idle threshold
-            if idle > 300:
-                _LOGGER.debug(
-                    "Watchdog sending Easy Check to '%s' after %.1fs idle", t.get_serial_number(), idle
-                )
-                hass.async_add_executor_job(t.check)
+            yaml_covers.setdefault(serial, []).append(dict(cov))
+    hass.data[DOMAIN]["_yaml_covers"] = yaml_covers
 
-    track_time_interval(hass, _watchdog, timedelta(minutes=2))
+    elero_yaml = config.get(DOMAIN)
+    if not elero_yaml:
+        return True
 
-    def close_serial_ports(event):
-        """Close the serial port."""
-        ELERO_TRANSMITTERS.close_transmitters()
+    # Local USB transmitters
+    for tx in elero_yaml.get(CONF_TRANSMITTERS) or []:
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_IMPORT},
+                data={
+                    CONF_CONNECTION_TYPE: CONNECTION_LOCAL,
+                    CONF_TRANSMITTER_SERIAL_NUMBER: tx.get(
+                        CONF_TRANSMITTER_SERIAL_NUMBER
+                    ),
+                    CONF_BAUDRATE: tx.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
+                    CONF_BYTESIZE: tx.get(CONF_BYTESIZE, DEFAULT_BYTESIZE),
+                    CONF_PARITY: tx.get(CONF_PARITY, DEFAULT_PARITY),
+                    CONF_STOPBITS: tx.get(CONF_STOPBITS, DEFAULT_STOPBITS),
+                },
+            )
+        )
 
-    hass.bus.listen_once(EVENT_HOMEASSISTANT_STOP, close_serial_ports)
+    # Remote (ser2net) transmitters
+    for tx in elero_yaml.get(CONF_REMOTE_TRANSMITTERS) or []:
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_IMPORT},
+                data={
+                    CONF_CONNECTION_TYPE: CONNECTION_REMOTE,
+                    CONF_TRANSMITTER_SERIAL_NUMBER: tx[
+                        CONF_TRANSMITTER_SERIAL_NUMBER
+                    ],
+                    CONF_REMOTE_TRANSMITTERS_ADDRESS: tx[
+                        CONF_REMOTE_TRANSMITTERS_ADDRESS
+                    ],
+                },
+            )
+        )
 
-    # Return boolean to indicate that initialization was successfully.
+    async_create_issue(
+        hass,
+        DOMAIN,
+        "deprecated_yaml",
+        is_fixable=False,
+        severity=IssueSeverity.WARNING,
+        translation_key="deprecated_yaml",
+    )
     return True
 
 
-class EleroTransmitters(object):
-    """Container for the Elero Centero USB Transmitter Sticks."""
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Elero from a config entry."""
+    global ELERO_TRANSMITTERS
 
-    def __init__(self, config):
-        """Initialize the usb sticks."""
-        self.config = config
-        self.transmitters = {}
-        _LOGGER.info(f"Elero lib version: {__version__}")
+    hass.data.setdefault(DOMAIN, {})
 
-    def discover(self):
-        """Discover the local connected Elero Transmitter Sticks."""
+    serial_number = entry.data.get(CONF_TRANSMITTER_SERIAL_NUMBER)
+    connection_type = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_LOCAL)
 
+    transmitter: EleroTransmitter | None = None
+
+    def _build_transmitter() -> EleroTransmitter | None:
+        if connection_type == CONNECTION_REMOTE:
+            address = entry.data[CONF_REMOTE_TRANSMITTERS_ADDRESS]
+            tx = EleroRemoteTransmitter(serial_number, address)
+            tx.init_serial()
+            return tx if tx.get_transmitter_state() else None
+
+        # local USB — discover the matching stick by serial number
         for cp in list_ports.comports():
-            found_elero_stick = True if (
-                cp and cp.manufacturer
+            is_elero = (
+                cp.manufacturer
                 and DEFAULT_BRAND in cp.manufacturer
                 and cp.product
                 and DEFAULT_PRODUCT in cp.product
                 and cp.serial_number
-            ) else False
-            preset_elero_stick = False
-            try:
-                #check if device matches and if serial number was set
-                if cp.device == os.environ["ELERO_DEVICE"] and os.environ["ELERO_SERIAL_NUMBER"]:
-                    preset_elero_stick = True
-                    elero_serial_number = os.environ["ELERO_SERIAL_NUMBER"]
-                    _LOGGER.info(
-                        f"Elero Transmitter Stick was configured manually: {os.environ['ELERO_DEVICE']}"
-                        f"with serial number {os.environ['ELERO_SERIAL_NUMBER']}"
-                    )
-            except KeyError:
-                # env variables not set, moving on
-                pass
+            )
+            preset = (
+                os.environ.get("ELERO_DEVICE") == cp.device
+                and os.environ.get("ELERO_SERIAL_NUMBER")
+            )
+            if not (is_elero or preset):
+                continue
+            stick_serial = (
+                os.environ["ELERO_SERIAL_NUMBER"] if preset else cp.serial_number
+            )
+            if serial_number and stick_serial != serial_number:
+                continue
+            tx = EleroTransmitter(
+                cp.device,
+                stick_serial,
+                entry.data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
+                entry.data.get(CONF_BYTESIZE, DEFAULT_BYTESIZE),
+                entry.data.get(CONF_PARITY, DEFAULT_PARITY),
+                entry.data.get(CONF_STOPBITS, DEFAULT_STOPBITS),
+            )
+            tx.init_serial()
+            return tx if tx.get_transmitter_state() else None
+        return None
 
-            if found_elero_stick or preset_elero_stick:
-                # use discovered serial number
-                if found_elero_stick:
-                    elero_serial_number = cp.serial_number
-                _LOGGER.info(
-                    f"Elero Transmitter Stick is found on port: "
-                    f"'{cp.device}' with serial number: '{elero_serial_number}'."
-                )
+    transmitter = await hass.async_add_executor_job(_build_transmitter)
+    if transmitter is None:
+        raise ConfigEntryNotReady(
+            f"Could not connect to Elero transmitter '{serial_number}' ({connection_type})"
+        )
 
-                if self.config and elero_serial_number in self.config:
-                    baudrate = self.config[elero_serial_number].get(CONF_BAUDRATE)
-                    bytesize = self.config[elero_serial_number].get(CONF_BYTESIZE)
-                    parity = self.config[elero_serial_number].get(CONF_PARITY)
-                    stopbits = self.config[elero_serial_number].get(CONF_STOPBITS)
-                else:
-                    baudrate = DEFAULT_BAUDRATE
-                    bytesize = DEFAULT_BYTESIZE
-                    parity = DEFAULT_PARITY
-                    stopbits = DEFAULT_STOPBITS
+    hass.data[DOMAIN][entry.entry_id] = transmitter
 
-                elero_transmitter = EleroTransmitter(
-                    cp.device, elero_serial_number, baudrate, bytesize, parity, stopbits
-                )
-                elero_transmitter.init_serial()
+    # Register the transmitter stick as a HA "hub" device so individual
+    # covers can attach to it via their `via_device`.
+    dev_reg = dr.async_get(hass)
+    dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, transmitter.get_serial_number())},
+        manufacturer="Elero",
+        model="Transmitter Stick",
+        name=f"Elero {transmitter.get_serial_number()}",
+    )
 
-                if elero_transmitter.get_transmitter_state():
-                    if elero_serial_number not in self.transmitters:
-                        self.transmitters[elero_serial_number] = elero_transmitter
-                    else:
-                        _LOGGER.error(
-                            f"'{elero_serial_number}' transmitter is already added!"
-                        )
-    def connect_remote_transmitters(self, config):
-        """Find remote transmitters."""
+    # Maintain the legacy module-level singleton for any YAML cover configs
+    # that still resolve transmitters by serial_number.
+    if ELERO_TRANSMITTERS is None:
+        ELERO_TRANSMITTERS = EleroTransmitters(None)
+    ELERO_TRANSMITTERS.transmitters[transmitter.get_serial_number()] = transmitter
 
-        _LOGGER.debug("Connect Elero remote transmitters")
-        
-        if not config:  # No remote transmitters configured
+    @callback
+    def _watchdog(_now):
+        if transmitter.last_response_ts is None:
             return
-        
-        for remote_config in config:
-            _LOGGER.debug(f"Try to connect to remote transmitter "
-                          f"'{remote_config[CONF_TRANSMITTER_SERIAL_NUMBER]} with " 
-                          f"address '{remote_config[CONF_REMOTE_TRANSMITTERS_ADDRESS]}'")
-            
-            serial_number = remote_config[CONF_TRANSMITTER_SERIAL_NUMBER]
-            address = remote_config[CONF_REMOTE_TRANSMITTERS_ADDRESS]
+        idle = time.time() - transmitter.last_response_ts
+        if idle > 300:
+            _LOGGER.debug(
+                "Watchdog sending Easy Check to '%s' after %.1fs idle",
+                transmitter.get_serial_number(),
+                idle,
+            )
+            hass.async_add_executor_job(transmitter.check)
 
-            elero_transmitter = EleroRemoteTransmitter(serial_number, address)
-            elero_transmitter.init_serial()
+    entry.async_on_unload(
+        async_track_time_interval(hass, _watchdog, timedelta(minutes=2))
+    )
 
-            if elero_transmitter.get_transmitter_state():
-                    if serial_number not in self.transmitters:
-                        self.transmitters[serial_number] = elero_transmitter
-                    else:
-                        _LOGGER.error(
-                            f"'{serial_number}' transmitter has already been added!"
-                        )
+    async def _on_stop(_event):
+        await hass.async_add_executor_job(transmitter.close_serial)
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+    )
+
+    # Auto-import legacy YAML covers as sub-entries (idempotent: keyed by channel).
+    _auto_import_yaml_covers(hass, entry, transmitter.get_serial_number())
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+def _auto_import_yaml_covers(
+    hass: HomeAssistant, entry: ConfigEntry, serial_number: str
+) -> None:
+    """Migrate `cover: - platform: elero` YAML to ConfigSubentries.
+
+    Idempotent: a cover whose channel already has a sub-entry is skipped.
+    Safe to run on every start while the YAML config still exists; once the
+    user removes the YAML the function becomes a no-op.
+    """
+    yaml_covers = hass.data.get(DOMAIN, {}).get("_yaml_covers", {}).get(
+        serial_number, []
+    )
+    if not yaml_covers:
+        return
+
+    existing_channels = {
+        int(sub.data.get(CONF_CHANNEL))
+        for sub in entry.subentries.values()
+        if sub.subentry_type == SUBENTRY_TYPE_COVER
+        and sub.data.get(CONF_CHANNEL) is not None
+    }
+
+    for cov in yaml_covers:
+        try:
+            channel = int(cov[CONF_CHANNEL])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if channel in existing_channels:
+            continue
+        try:
+            sub_data = {
+                CONF_NAME: cov[CONF_NAME],
+                CONF_CHANNEL: channel,
+                CONF_DEVICE_CLASS: cov[CONF_DEVICE_CLASS],
+                CONF_SUPPORTED_FEATURES: list(cov[CONF_SUPPORTED_FEATURES]),
+                CONF_TRAVEL_TIME: float(
+                    cov.get(CONF_TRAVEL_TIME, DEFAULT_TRAVEL_TIME)
+                ),
+                CONF_TILT_STEP: float(cov.get(CONF_TILT_STEP, DEFAULT_TILT_STEP)),
+            }
+        except KeyError as exc:
+            _LOGGER.warning(
+                "Skipping YAML cover auto-import — missing field %s in %s",
+                exc,
+                cov,
+            )
+            continue
+
+        subentry = ConfigSubentry(
+            data=sub_data,
+            subentry_type=SUBENTRY_TYPE_COVER,
+            title=sub_data[CONF_NAME],
+            unique_id=f"{serial_number}_{channel}",
+        )
+        try:
+            hass.config_entries.async_add_subentry(entry, subentry)
+            existing_channels.add(channel)
+            _LOGGER.info(
+                "Auto-imported YAML cover '%s' (ch %s) as sub-entry of %s",
+                sub_data[CONF_NAME],
+                channel,
+                serial_number,
+            )
+        except Exception as exc:
+            _LOGGER.error(
+                "Failed to import YAML cover '%s' (ch %s): %s",
+                sub_data.get(CONF_NAME, "?"),
+                channel,
+                exc,
+            )
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload an Elero config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    transmitter = hass.data[DOMAIN].pop(entry.entry_id, None)
+    if transmitter:
+        await hass.async_add_executor_job(transmitter.close_serial)
+        if ELERO_TRANSMITTERS:
+            ELERO_TRANSMITTERS.transmitters.pop(
+                transmitter.get_serial_number(), None
+            )
+    return unload_ok
+
+
+def _legacy_lookup_transmitter(hass: HomeAssistant, serial_number: str | None):
+    """Find an active transmitter by serial number (used by legacy YAML covers).
+
+    Looks at all currently set-up config entries and returns the matching
+    transmitter, falling back to the first one if no serial is given.
+    """
+    bucket = hass.data.get(DOMAIN, {})
+    transmitters = [v for v in bucket.values() if isinstance(v, EleroTransmitter)]
+    if not transmitters:
+        _LOGGER.error("No Elero transmitter is set up yet")
+        return None
+    if not serial_number:
+        return transmitters[0]
+    for tx in transmitters:
+        if tx.get_serial_number() == serial_number:
+            return tx
+    _LOGGER.error("No Elero transmitter found for serial '%s'", serial_number)
+    return None
+
+
+# ── Transmitter classes (unchanged behaviour) ───────────────────────────
+
+
+class EleroTransmitters:
+    """Container for the Elero Centero USB Transmitter Sticks (legacy)."""
+
+    def __init__(self, config):
+        self.config = config
+        self.transmitters: dict[str, "EleroTransmitter"] = {}
+        _LOGGER.info("Elero lib version: %s", __version__)
 
     def get_transmitter(self, serial_number):
-        """Return the given transmitter."""
         if serial_number in self.transmitters:
             return self.transmitters[serial_number]
-        else:
-            _LOGGER.error(f"The transmitter '{serial_number}' doesn't exist!")
-            return None
+        _LOGGER.error("The transmitter '%s' doesn't exist!", serial_number)
+        return None
 
     def close_transmitters(self):
-        """Close the serial connection of the transmitters."""
         for _, t in self.transmitters.items():
             t.close_serial()
 
 
-class EleroTransmitter(object):
+class EleroTransmitter:
     """Representation of an Elero Centero USB Transmitter Stick."""
 
-    def __init__(self, serial_device, serial_number, baudrate, bytesize, parity, stopbits):
-        """Initialize a elero transmitter."""
+    def __init__(
+        self, serial_device, serial_number, baudrate, bytesize, parity, stopbits
+    ):
         self._port = serial_device
         self._serial_number = serial_number
         self._baudrate = baudrate
@@ -314,9 +467,8 @@ class EleroTransmitter(object):
         self._parity = parity
         self._stopbits = stopbits
         self._threading_lock = threading.Lock()
-        # Setup the serial connection to the transmitter.
         self._serial = None
-        self._learned_channels = {}
+        self._learned_channels: dict = {}
         # Diagnostics
         self.last_command_ts = None
         self.last_response_ts = None
@@ -325,18 +477,13 @@ class EleroTransmitter(object):
         self.reconnect_count = 0
         self.checksum_error_count = 0
         self.consecutive_failures = 0
-        
-    def init_serial(self):
-        """Setup serial connection and get learned channels from the transmitter."""
 
-        # Setup the serial connection to the transmitter.
+    def init_serial(self):
         self.init_serial_port()
-        # Get the learned channels from the transmitter.
         if self._serial:
             self.check()
 
     def init_serial_port(self):
-        """Init the serial port to the transmitter."""
         try:
             self._serial = serial.Serial(
                 self._port,
@@ -349,16 +496,19 @@ class EleroTransmitter(object):
             )
         except serial.serialutil.SerialException as exc:
             _LOGGER.exception(
-                f"Unable to open serial port for '{self._serial_number}' to"
-                f"the Transmitter Stick: '{exc}'."
+                "Unable to open serial port for '%s' to the Transmitter Stick: '%s'",
+                self._serial_number,
+                exc,
             )
 
     def log_out_serial_port_details(self):
-        """Log out the details of the serial connection."""
-        _LOGGER.debug(f"Transmitter stick on port '{self._port}' serial: '{self._serial_number}'.")
+        _LOGGER.debug(
+            "Transmitter stick on port '%s' serial: '%s'",
+            self._port,
+            self._serial_number,
+        )
 
     def close_serial(self):
-        """Close the serial connection of the transmitter."""
         acquired = self._threading_lock.acquire(timeout=5)
         if not acquired:
             _LOGGER.error("Failed to acquire lock to close serial connection.")
@@ -367,210 +517,119 @@ class EleroTransmitter(object):
             if self._serial and self._serial.is_open:
                 self._serial.close()
         except Exception as exc:
-            _LOGGER.exception(
-                f"Problem closing serial connection: "
-                f"exception: '{exc}'"
-            )
+            _LOGGER.exception("Problem closing serial connection: '%s'", exc)
         finally:
             self._threading_lock.release()
 
     def get_transmitter_state(self):
-        """Return with transmitter is usable or not."""
-        return True if self._serial else False
+        return bool(self._serial)
 
     def get_serial_number(self):
-        """Return the ID of the transmitter."""
         return self._serial_number
 
+    def get_learned_channels(self):
+        return tuple(sorted(self._learned_channels.keys()))
+
+    # ── command helpers ────────────────────────────────────────────────
+
     def __get_check_command(self):
-        """Create a hex list to Check command."""
-        int_list = [BYTE_HEADER, BYTE_LENGTH_2, COMMAND_CHECK]
-        return int_list
+        return [BYTE_HEADER, BYTE_LENGTH_2, COMMAND_CHECK]
 
     def check(self):
-        """Wich channels are learned.
-
-        Should be received an answer "Easy Confirm" with in 1 second.
-        """
-        int_list = self.__get_check_command()
-        self.__process_command(COMMAND_CHECH_TEXT, int_list, 0, RESPONSE_LENGTH_CHECK)
+        self.__process_command(
+            COMMAND_CHECH_TEXT, self.__get_check_command(), 0, RESPONSE_LENGTH_CHECK
+        )
 
     def _set_learned_channels(self, resp):
-        """Store learned channels."""
         self._learned_channels = dict.fromkeys(resp["chs"])
         chs = " ".join(map(str, list(self._learned_channels.keys())))
         _LOGGER.debug(
-            f"The taught channels on the '{self._serial_number}' "
-            f"transmitter are '{chs}'."
+            "The taught channels on the '%s' transmitter are '%s'.",
+            self._serial_number,
+            chs,
         )
 
     def set_channel(self, channel, obj):
-        """Set the channel if it is learned."""
         if channel in self._learned_channels:
             self._learned_channels[channel] = obj
             return True
-        else:
-            _LOGGER.error(
-                f"The '{channel}' channel is not taught to the "
-                f"'{self._serial_number}' transmitter."
-            )
-            return False
+        _LOGGER.error(
+            "The '%s' channel is not taught to the '%s' transmitter.",
+            channel,
+            self._serial_number,
+        )
+        return False
 
     def __get_info_command(self, channel):
-        """Create a hex list to the Info command."""
-        int_list = [
+        return [
             BYTE_HEADER,
             BYTE_LENGTH_4,
             COMMAND_INFO,
             self.__set_upper_channel_bits(channel),
             self.__set_lower_channel_bits(channel),
         ]
-        return int_list
 
     def info(self, channel):
-        """Return the current state of the cover.
-
-        Should be received an answer "Easy Act" with in 4 seconds.
-        """
-        int_list = self.__get_info_command(channel)
         self.__process_command(
-            COMMAND_INFO_TEXT, int_list, channel, RESPONSE_LENGTH_INFO
+            COMMAND_INFO_TEXT,
+            self.__get_info_command(channel),
+            channel,
+            RESPONSE_LENGTH_INFO,
         )
 
-    def __get_up_command(self, channel):
-        """Create a hex list to Open command."""
-        int_list = [
+    def __get_send_command(self, channel, payload):
+        return [
             BYTE_HEADER,
             BYTE_LENGTH_5,
             COMMAND_SEND,
             self.__set_upper_channel_bits(channel),
             self.__set_lower_channel_bits(channel),
-            PAYLOAD_UP,
+            payload,
         ]
-        return int_list
 
     def up(self, channel):
-        """Open the cover.
-
-        Should be received an answer "Easy Act" with in 4 seconds.
-        """
         self.__process_command(
             PAYLOAD_UP_TEXT,
-            self.__get_up_command(channel),
+            self.__get_send_command(channel, PAYLOAD_UP),
             channel,
             RESPONSE_LENGTH_SEND,
         )
-
-    def __get_down_command(self, channel):
-        """Create a hex list to Close command."""
-        int_list = [
-            BYTE_HEADER,
-            BYTE_LENGTH_5,
-            COMMAND_SEND,
-            self.__set_upper_channel_bits(channel),
-            self.__set_lower_channel_bits(channel),
-            PAYLOAD_DOWN,
-        ]
-        return int_list
 
     def down(self, channel):
-        """Close the cover.
-
-        Should be received an answer "Easy Act" with in 4 seconds.
-        """
         self.__process_command(
             PAYLOAD_DOWN_TEXT,
-            self.__get_down_command(channel),
+            self.__get_send_command(channel, PAYLOAD_DOWN),
             channel,
             RESPONSE_LENGTH_SEND,
         )
-
-    def __get_stop_command(self, channel):
-        """Create a hex list to the Stop command."""
-        int_list = [
-            BYTE_HEADER,
-            BYTE_LENGTH_5,
-            COMMAND_SEND,
-            self.__set_upper_channel_bits(channel),
-            self.__set_lower_channel_bits(channel),
-            PAYLOAD_STOP,
-        ]
-        return int_list
 
     def stop(self, channel):
-        """Stop the cover.
-
-        Should be received an answer "Easy Act" with in 4 seconds.
-        """
         self.__process_command(
             PAYLOAD_STOP_TEXT,
-            self.__get_stop_command(channel),
+            self.__get_send_command(channel, PAYLOAD_STOP),
             channel,
             RESPONSE_LENGTH_SEND,
         )
-
-    def __get_intermediate_command(self, channel):
-        """Create a hex list to the intermediate command."""
-        int_list = [
-            BYTE_HEADER,
-            BYTE_LENGTH_5,
-            COMMAND_SEND,
-            self.__set_upper_channel_bits(channel),
-            self.__set_lower_channel_bits(channel),
-            PAYLOAD_INTERMEDIATE_POS,
-        ]
-        return int_list
 
     def intermediate(self, channel):
-        """Set the cover in intermediate position.
-
-        Should be received an answer "Easy Act" with in 4 seconds.
-        """
         self.__process_command(
             PAYLOAD_INTERMEDIATE_POS_TEXT,
-            self.__get_intermediate_command(channel),
+            self.__get_send_command(channel, PAYLOAD_INTERMEDIATE_POS),
             channel,
             RESPONSE_LENGTH_SEND,
         )
-
-    def __get_ventilation_tilting_command(self, channel):
-        """Create a hex list to the ventilation command."""
-        int_list = [
-            BYTE_HEADER,
-            BYTE_LENGTH_5,
-            COMMAND_SEND,
-            self.__set_upper_channel_bits(channel),
-            self.__set_lower_channel_bits(channel),
-            PAYLOAD_VENTILATION_POS_TILTING,
-        ]
-        return int_list
 
     def ventilation_tilting(self, channel):
-        """Set the cover in ventilation/tilting position.
-
-        Should be received an answer "Easy Act" with in 4 seconds.
-        """
         self.__process_command(
             PAYLOAD_VENTILATION_POS_TILTING_TEXT,
-            self.__get_ventilation_tilting_command(channel),
+            self.__get_send_command(channel, PAYLOAD_VENTILATION_POS_TILTING),
             channel,
             RESPONSE_LENGTH_SEND,
         )
 
+    # ── low-level I/O ──────────────────────────────────────────────────
+
     def __process_command(self, command_text, int_list, channel, resp_length):
-        """Send a command safely with retry, timeouts and proper locking.
-
-        Previous implementation could deadlock if the underlying serial read blocked
-        indefinitely (e.g. remote ser2net socket disruption) while holding the lock.
-        It also attempted to release an un-acquired lock and referenced undefined
-        variables on lock acquisition failure. This version:
-          * Always defines ser_resp per attempt.
-          * Uses context manager style locking to guarantee release.
-          * Implements a bounded read with overall timeout (per attempt) so we never
-            block forever.
-          * Re-initialises the serial port on failure.
-        """
-
         int_list.append(self.__calculate_checksum(*int_list))
         bytes_data = self.__create_serial_data(int_list)
 
@@ -579,12 +638,17 @@ class EleroTransmitter(object):
             ser_resp = b""
             try:
                 _LOGGER.debug(
-                    f"Trying to send '{command_text}' command (attempt {attempt}/{max_attempts})."
+                    "Trying to send '%s' command (attempt %d/%d)",
+                    command_text,
+                    attempt,
+                    max_attempts,
                 )
                 acquired = self._threading_lock.acquire(timeout=5)
                 if not acquired:
                     _LOGGER.error(
-                        f"Timeout acquiring lock for '{command_text}' (attempt {attempt})."
+                        "Timeout acquiring lock for '%s' (attempt %d)",
+                        command_text,
+                        attempt,
                     )
                     continue
                 try:
@@ -595,11 +659,10 @@ class EleroTransmitter(object):
                             raise serial.serialutil.SerialException(
                                 "Serial port not initialised"
                             )
-                    # (Re)set low timeouts defensively (pyserial may lose them after reconnect)
                     try:
                         self._serial.timeout = 2
                         self._serial.write_timeout = 2
-                    except Exception:  # pragma: no cover
+                    except Exception:
                         pass
 
                     self._serial.write(bytes_data)
@@ -609,7 +672,9 @@ class EleroTransmitter(object):
 
                 if not ser_resp:
                     _LOGGER.warning(
-                        f"Empty/timeout response for '{command_text}' (attempt {attempt})."
+                        "Empty/timeout response for '%s' (attempt %d)",
+                        command_text,
+                        attempt,
                     )
                     self._recover_serial()
                     continue
@@ -618,8 +683,15 @@ class EleroTransmitter(object):
                 rsp = resp.get("status")
                 chs = resp.get("chs")
                 _LOGGER.debug(
-                    f"Sent '{command_text}' to transmitter '{self._serial_number}' ch '{channel}' "
-                    f"cmd: {bytes_data} resp: {ser_resp} status: '{rsp}' chs: '{chs}' attempt: {attempt}."
+                    "Sent '%s' to transmitter '%s' ch '%s' cmd: %s resp: %s status: '%s' chs: '%s' attempt: %d",
+                    command_text,
+                    self._serial_number,
+                    channel,
+                    bytes_data,
+                    ser_resp,
+                    rsp,
+                    chs,
+                    attempt,
                 )
                 if command_text == COMMAND_CHECH_TEXT:
                     self._set_learned_channels(resp)
@@ -627,26 +699,31 @@ class EleroTransmitter(object):
                     self._process_response(resp)
                 self.last_response_ts = time.time()
                 self.consecutive_failures = 0
-                break  # success
+                break
             except TimeoutError:
                 _LOGGER.warning(
-                    f"Timeout waiting full response for '{command_text}' (attempt {attempt})."
+                    "Timeout waiting full response for '%s' (attempt %d)",
+                    command_text,
+                    attempt,
                 )
                 self.timeout_count += 1
                 self.consecutive_failures += 1
                 self._recover_serial()
             except Exception as exc:
                 _LOGGER.exception(
-                    f"Error communicating with transmitter '{self._serial_number}' "
-                    f"cmd '{command_text}' ch '{channel}' attempt {attempt}: {exc}"
+                    "Error communicating with transmitter '%s' cmd '%s' ch '%s' attempt %d: %s",
+                    self._serial_number,
+                    command_text,
+                    channel,
+                    attempt,
+                    exc,
                 )
                 self.error_count += 1
                 self.consecutive_failures += 1
                 self._recover_serial()
-            time.sleep(0.5)  # small backoff between attempts
+            time.sleep(0.5)
 
     def _read_exact(self, expected_len, overall_timeout=2.5):
-        """Read exactly expected_len bytes within overall_timeout, else raise TimeoutError."""
         if not self._serial:
             return b""
         deadline = time.time() + overall_timeout
@@ -656,7 +733,6 @@ class EleroTransmitter(object):
             if chunk:
                 buf.extend(chunk)
             else:
-                # No data this cycle; short sleep to avoid busy loop
                 time.sleep(0.05)
         if len(buf) != expected_len:
             raise TimeoutError(
@@ -665,55 +741,42 @@ class EleroTransmitter(object):
         return bytes(buf)
 
     def _recover_serial(self):
-        """Attempt to recover the serial connection after an error or timeout."""
         try:
             if self._serial and self._serial.is_open:
                 try:
                     self._serial.close()
-                except Exception:  # pragma: no cover
+                except Exception:
                     pass
         finally:
             self.reconnect_count += 1
             self.init_serial_port()
 
     def _process_response(self, resp):
-        """Read the response form the device."""
-        # Reply to the appropriate channel.
         for ch in resp["chs"]:
-            # Call back the channel with its result.
-            if ch in self._learned_channels:
+            if ch in self._learned_channels and self._learned_channels[ch] is not None:
                 self._learned_channels[ch](resp)
             else:
                 _LOGGER.error(
-                    f"The channel is not learned '{self._serial_number}' "
-                    f"on the transmitter: '{ch}'."
+                    "The channel is not learned '%s' on the transmitter: '%s'.",
+                    self._serial_number,
+                    ch,
                 )
 
     def __parse_response(self, ser_resp, channel):
-        """Parse the serial data as a response."""
         response = {
-            "bytes": None,
-            "header": None,
-            "length": None,
-            "command": None,
-            "ch_h": None,
-            "ch_l": None,
+            "bytes": ser_resp,
+            "header": ser_resp[0],
+            "length": ser_resp[1],
+            "command": ser_resp[2],
+            "ch_h": self.__get_upper_channel_bits(ser_resp[3]),
+            "ch_l": self.__get_lower_channel_bits(ser_resp[4]),
             "chs": set(),
             "status": None,
             "cs": None,
         }
-        response["bytes"] = ser_resp
-        resp_length = len(ser_resp)
-        # Common parts.
-        response["header"] = ser_resp[0]
-        response["length"] = ser_resp[1]
-        response["command"] = ser_resp[2]
-        response["ch_h"] = self.__get_upper_channel_bits(ser_resp[3])
-        response["ch_l"] = self.__get_lower_channel_bits(ser_resp[4])
         response["chs"] = set(response["ch_h"] + response["ch_l"])
-        # Checksum validation: sum including checksum must be 0 mod 256
-        checksum_ok = (sum(ser_resp) % 256) == 0
-        if not checksum_ok:
+        resp_length = len(ser_resp)
+        if (sum(ser_resp) % 256) != 0:
             self.checksum_error_count += 1
             _LOGGER.error(
                 "Checksum error from transmitter '%s' channel '%s' raw %s",
@@ -721,112 +784,85 @@ class EleroTransmitter(object):
                 channel,
                 ser_resp,
             )
-        # Easy Confirmed (the answer on Easy Check).
         if resp_length == RESPONSE_LENGTH_CHECK:
             response["cs"] = ser_resp[5]
-        # Easy Ack (the answer on Easy Info).
         elif resp_length == RESPONSE_LENGTH_SEND:
             if ser_resp[5] in INFO:
                 response["status"] = INFO[ser_resp[5]]
             else:
                 response["status"] = INFO_UNKNOWN
                 _LOGGER.error(
-                    f"Transmitter: '{self._serial_number}' ch: '{channel}' "
-                    f"status is unknown: '{ser_resp[5]:X}'."
+                    "Transmitter: '%s' ch: '%s' status is unknown: '%X'.",
+                    self._serial_number,
+                    channel,
+                    ser_resp[5],
                 )
             response["cs"] = ser_resp[6]
         else:
             _LOGGER.error(
-                f"Transmitter: '{self._serial_number}' ch: '{channel}' "
-                f"unknown response: '{ser_resp}'."
+                "Transmitter: '%s' ch: '%s' unknown response: '%s'.",
+                self._serial_number,
+                channel,
+                ser_resp,
             )
             response["status"] = INFO_UNKNOWN
-
         return response
 
     def __calculate_checksum(self, *args):
-        """Calculate checksum.
-
-        All the sum of all bytes (Header to CS) must be 0x00.
-        """
         return (256 - sum(args)) % 256
 
     def __create_serial_data(self, int_list):
-        """Convert integers to bytes for serial communication."""
-        bytes_data = bytes(int_list)
-        return bytes_data
+        return bytes(int_list)
 
     def __set_upper_channel_bits(self, channel):
-        """Set upper channel bits, for channel 9 to 15."""
-        res = (1 << (channel - 1)) >> BIT_8
-        return res
+        return (1 << (channel - 1)) >> BIT_8
 
     def __set_lower_channel_bits(self, channel):
-        """Set lower channel bits, for channel 1 to 8."""
-        res = (1 << (channel - 1)) & HEX_255
-        return res
+        return (1 << (channel - 1)) & HEX_255
 
     def __get_upper_channel_bits(self, byt):
-        """Return the set channel numbers from 9 to 15."""
         channels = []
         for i in range(0, 8):
             if (byt >> i) & 1 == 1:
-                ch = i + 9
-                channels.append(ch)
-
+                channels.append(i + 9)
         return tuple(channels)
 
     def __get_lower_channel_bits(self, byt):
-        """Return the set channel numbers from 1 to 8."""
         channels = []
         for i in range(0, 8):
             if (byt >> i) & 1 == 1:
-                ch = i + 1
-                channels.append(ch)
-
+                channels.append(i + 1)
         return tuple(channels)
 
 
 class EleroRemoteTransmitter(EleroTransmitter):
-    """Representation of a remotely connected Elero Centero USB Transmitter Stick.
-    
-       Using ser2net
-    
-    """
-    def __init__(self, serial_number, address):
-        
-        self._address = address
-        super().__init__(None, serial_number, None, None, None, None, )
+    """Elero Transmitter Stick connected via ser2net (TCP)."""
 
-    
+    def __init__(self, serial_number, address):
+        self._address = address
+        super().__init__(None, serial_number, None, None, None, None)
+
     def init_serial(self):
-        """Setup serial connection and get learned channels from the transmitter."""
-        
-        # Setup the serial connection to the transmitter.
         self.init_serial_port()
-        # Get the learned channels from the transmitter.
         if self._serial:
             self.check()
 
-
     def init_serial_port(self):
-        """Init the serial (socket) port to the transmitter with timeouts to avoid deadlocks."""
-
         url = f"socket://{self._address}"
-        # https://pyserial.readthedocs.io/en/latest/url_handlers.html#urls
         try:
-            # Explicit timeouts to prevent indefinite blocking reads.
             self._serial = serial.serial_for_url(url, timeout=2, write_timeout=2)
             _LOGGER.info(
-                f"Elero Transmitter Stick is remotely connected to '{self._address}' "
-                f"with serial number: '{self._serial_number}'."
+                "Elero Transmitter Stick is remotely connected to '%s' with serial number: '%s'",
+                self._address,
+                self._serial_number,
             )
         except Exception as exc:
             _LOGGER.exception(
-                f"Unable to connect to remote serial port '{url}' for serial "
-                f"number {self._serial_number}: '{exc}'."
+                "Unable to connect to remote serial port '%s' for serial number '%s': '%s'",
+                url,
+                self._serial_number,
+                exc,
             )
 
     def log_out_serial_port_details(self):
-        """Log out the details of the serial connection."""
-        _LOGGER.debug(f"Remote Transmitter stick on address '{self._address}'.")
+        _LOGGER.debug("Remote Transmitter stick on address '%s'.", self._address)
