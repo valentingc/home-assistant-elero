@@ -572,14 +572,28 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._closed = False
 
         elif status in (INFO_START_TO_MOVE_UP, INFO_MOVING_UP):
-            if self._move_start_time is None:
-                self._start_moving(+1)
-            self._tilt_position = None
+            if time.time() < self._tilt_step_lock_until:
+                _LOGGER.debug(
+                    "%s: ignoring %s — tilt_step lock active",
+                    self._attr_name,
+                    status,
+                )
+            else:
+                if self._move_start_time is None:
+                    self._start_moving(+1)
+                self._tilt_position = None
 
         elif status in (INFO_START_TO_MOVE_DOWN, INFO_MOVING_DOWN):
-            if self._move_start_time is None:
-                self._start_moving(-1)
-            self._tilt_position = None
+            if time.time() < self._tilt_step_lock_until:
+                _LOGGER.debug(
+                    "%s: ignoring %s — tilt_step lock active",
+                    self._attr_name,
+                    status,
+                )
+            else:
+                if self._move_start_time is None:
+                    self._start_moving(-1)
+                self._tilt_position = None
 
         elif status == INFO_STOPPED_IN_UNDEFINED_POSITION:
             self._stop_moving()
