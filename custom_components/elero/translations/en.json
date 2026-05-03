@@ -48,7 +48,8 @@
                         "device_class": "Device class",
                         "supported_features": "Supported features",
                         "travel_time": "Travel time (seconds for full open↔close)",
-                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)"
+                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)",
+                        "tilt_travel_time": "Tilt travel time (seconds for full slat open↔close, 0 = disable timed tilt slider)"
                     }
                 },
                 "reconfigure": {
@@ -59,7 +60,8 @@
                         "device_class": "Device class",
                         "supported_features": "Supported features",
                         "travel_time": "Travel time (seconds for full open↔close)",
-                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)"
+                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)",
+                        "tilt_travel_time": "Tilt travel time (seconds for full slat open↔close, 0 = disable timed tilt slider)"
                     }
                 }
             }

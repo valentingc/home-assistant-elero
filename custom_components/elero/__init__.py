@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 import logging
 import os
@@ -47,6 +47,7 @@ from .const import (
     CONF_STOPBITS,
     CONF_SUPPORTED_FEATURES,
     CONF_TILT_STEP,
+    CONF_TILT_TRAVEL_TIME,
     CONF_TRANSMITTERS,
     CONF_TRANSMITTER_SERIAL_NUMBER,
     CONF_TRAVEL_TIME,
@@ -59,6 +60,7 @@ from .const import (
     DEFAULT_PRODUCT,
     DEFAULT_STOPBITS,
     DEFAULT_TILT_STEP,
+    DEFAULT_TILT_TRAVEL_TIME,
     DEFAULT_TRAVEL_TIME,
     DOMAIN,
     HEX_255,
@@ -366,6 +368,9 @@ def _auto_import_yaml_covers(
                     cov.get(CONF_TRAVEL_TIME, DEFAULT_TRAVEL_TIME)
                 ),
                 CONF_TILT_STEP: float(cov.get(CONF_TILT_STEP, DEFAULT_TILT_STEP)),
+                CONF_TILT_TRAVEL_TIME: float(
+                    cov.get(CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME)
+                ),
             }
         except KeyError as exc:
             _LOGGER.warning(

@@ -27,6 +27,7 @@ CONF_CHANNEL = "channel"
 CONF_SUPPORTED_FEATURES = "supported_features"
 CONF_TRAVEL_TIME = "travel_time"
 CONF_TILT_STEP = "tilt_step"
+CONF_TILT_TRAVEL_TIME = "tilt_travel_time"
 
 # Sub-entry types
 SUBENTRY_TYPE_COVER = "cover"
@@ -38,6 +39,7 @@ DEFAULT_PARITY = "N"
 DEFAULT_STOPBITS = 1
 DEFAULT_TRAVEL_TIME = 50.0
 DEFAULT_TILT_STEP = 2.0
+DEFAULT_TILT_TRAVEL_TIME = 2.0
 
 DEFAULT_BRAND = "elero"
 DEFAULT_PRODUCT = "Transmitter Stick"

@@ -37,6 +37,7 @@ from .const import (
     CONF_STOPBITS,
     CONF_SUPPORTED_FEATURES,
     CONF_TILT_STEP,
+    CONF_TILT_TRAVEL_TIME,
     CONF_TRANSMITTER_SERIAL_NUMBER,
     CONF_TRAVEL_TIME,
     CONNECTION_LOCAL,
@@ -48,6 +49,7 @@ from .const import (
     DEFAULT_PRODUCT,
     DEFAULT_STOPBITS,
     DEFAULT_TILT_STEP,
+    DEFAULT_TILT_TRAVEL_TIME,
     DEFAULT_TRAVEL_TIME,
     DOMAIN,
     ELERO_COVER_DEVICE_CLASSES,
@@ -265,6 +267,16 @@ def _cover_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     min=0, max=100, step=0.5, mode=NumberSelectorMode.BOX
                 )
             ),
+            vol.Optional(
+                CONF_TILT_TRAVEL_TIME,
+                default=defaults.get(
+                    CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=30, step=0.1, mode=NumberSelectorMode.BOX
+                )
+            ),
         }
     )
 
@@ -305,4 +317,7 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any]:
     out[CONF_CHANNEL] = int(out[CONF_CHANNEL])
     out[CONF_TRAVEL_TIME] = float(out.get(CONF_TRAVEL_TIME, DEFAULT_TRAVEL_TIME))
     out[CONF_TILT_STEP] = float(out.get(CONF_TILT_STEP, DEFAULT_TILT_STEP))
+    out[CONF_TILT_TRAVEL_TIME] = float(
+        out.get(CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME)
+    )
     return out

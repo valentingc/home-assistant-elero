@@ -1,7 +1,7 @@
 {
     "domain": "elero",
     "name": "Elero",
-    "version": "4.0.1",
+    "version": "4.1.0",
     "config_flow": true,
     "iot_class": "local_push",
     "integration_type": "hub",

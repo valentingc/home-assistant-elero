@@ -48,7 +48,8 @@
                         "device_class": "Geräteklasse",
                         "supported_features": "Unterstützte Funktionen",
                         "travel_time": "Laufzeit (Sekunden für komplettes Auf/Zu)",
-                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)"
+                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)",
+                        "tilt_travel_time": "Tilt-Laufzeit (Sekunden für komplettes Lamellen Auf/Zu, 0 = Tilt-Slider deaktivieren)"
                     }
                 },
                 "reconfigure": {
@@ -59,7 +60,8 @@
                         "device_class": "Geräteklasse",
                         "supported_features": "Unterstützte Funktionen",
                         "travel_time": "Laufzeit (Sekunden für komplettes Auf/Zu)",
-                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)"
+                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)",
+                        "tilt_travel_time": "Tilt-Laufzeit (Sekunden für komplettes Lamellen Auf/Zu, 0 = Tilt-Slider deaktivieren)"
                     }
                 }
             }

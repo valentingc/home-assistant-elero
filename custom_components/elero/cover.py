@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 import logging
 import time
@@ -29,9 +29,11 @@ from .const import (
     CONF_CHANNEL,
     CONF_SUPPORTED_FEATURES,
     CONF_TILT_STEP,
+    CONF_TILT_TRAVEL_TIME,
     CONF_TRANSMITTER_SERIAL_NUMBER,
     CONF_TRAVEL_TIME,
     DEFAULT_TILT_STEP,
+    DEFAULT_TILT_TRAVEL_TIME,
     DEFAULT_TRAVEL_TIME,
     DOMAIN,
     ELERO_COVER_DEVICE_CLASSES,
@@ -91,6 +93,9 @@ COVER_SCHEMA = vol.Schema(
         vol.Required(CONF_TRANSMITTER_SERIAL_NUMBER): str,
         vol.Optional(CONF_TRAVEL_TIME, default=DEFAULT_TRAVEL_TIME): vol.Coerce(float),
         vol.Optional(CONF_TILT_STEP, default=DEFAULT_TILT_STEP): vol.Coerce(float),
+        vol.Optional(
+            CONF_TILT_TRAVEL_TIME, default=DEFAULT_TILT_TRAVEL_TIME
+        ): vol.Coerce(float),
     }
 )
 
@@ -140,6 +145,9 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
                 supported_features=cover_conf[CONF_SUPPORTED_FEATURES],
                 travel_time=cover_conf[CONF_TRAVEL_TIME],
                 tilt_step=cover_conf.get(CONF_TILT_STEP, DEFAULT_TILT_STEP),
+                tilt_travel_time=cover_conf.get(
+                    CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME
+                ),
                 unique_suffix=str(channel),
             )
         )
@@ -190,6 +198,11 @@ async def async_setup_entry(
                 subentry.data.get(CONF_TRAVEL_TIME, DEFAULT_TRAVEL_TIME)
             ),
             tilt_step=float(subentry.data.get(CONF_TILT_STEP, DEFAULT_TILT_STEP)),
+            tilt_travel_time=float(
+                subentry.data.get(
+                    CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME
+                )
+            ),
             unique_suffix=str(int(subentry.data[CONF_CHANNEL])),
             hub_serial=serial,
         )
@@ -240,6 +253,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         supported_features: list[str],
         travel_time: float,
         tilt_step: float = DEFAULT_TILT_STEP,
+        tilt_travel_time: float = DEFAULT_TILT_TRAVEL_TIME,
         unique_suffix: str | None = None,
         hub_serial: str | None = None,
     ):
@@ -247,6 +261,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._transmitter = transmitter
         self._channel = channel
         self._tilt_step = tilt_step
+        self._tilt_travel_time = tilt_travel_time
 
         serial = hub_serial or transmitter.get_serial_number()
         suffix = unique_suffix or str(channel)
@@ -294,6 +309,12 @@ class EleroCover(CoverEntity, RestoreEntity):
         # stop response until this timestamp.
         self._tilt_step_lock_until = 0.0
 
+        # While a timed-tilt move is in flight (and briefly after), preserve
+        # the user's tilt target across stale "moving"/"undefined stop"
+        # responses that would otherwise wipe _tilt_position.
+        self._timed_tilt_target: int | None = None
+        self._timed_tilt_lock_until = 0.0
+
     # ── HA entity properties ────────────────────────────────────────────
 
     @property
@@ -336,6 +357,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         data["channel"] = self._channel
         data["travel_time"] = self._travel_time
         data["tilt_step"] = self._tilt_step
+        data["tilt_travel_time"] = self._tilt_travel_time
         data["move_start_position"] = self._move_start_position
         tx = self._transmitter
         data["last_command_ts"] = tx.last_command_ts
@@ -376,6 +398,18 @@ class EleroCover(CoverEntity, RestoreEntity):
     def _stop_moving(self, final_position=None):
         """Finalise a movement."""
         self._cancel_scheduled_stop()
+        # If the move lasted long enough to fully tilt the slats, the slats
+        # are now at the extreme matching the direction (UP → open, DOWN → closed).
+        if (
+            self._tilt_travel_time > 0
+            and self._move_start_time is not None
+            and self._move_direction != 0
+        ):
+            elapsed = time.time() - self._move_start_time
+            if elapsed >= self._tilt_travel_time:
+                self._tilt_position = (
+                    POSITION_OPEN if self._move_direction > 0 else POSITION_CLOSED
+                )
         if final_position is not None:
             self._position = final_position
         elif self._move_start_time is not None:
@@ -503,13 +537,66 @@ class EleroCover(CoverEntity, RestoreEntity):
         self.stop_cover()
 
     def set_cover_tilt_position(self, **kwargs):
+        """Move slats toward a percentage by sending a brief up/down pulse.
+
+        Requires ``tilt_travel_time`` > 0 (full slat travel in seconds).
+        Falls back to the legacy two-state behaviour otherwise. The vertical
+        position will drift slightly during the move; that drift is corrected
+        next time the cover hits its top or bottom endpoint.
+        """
         tilt_position = kwargs.get(ATTR_TILT_POSITION)
         if tilt_position is None:
             return
-        if tilt_position < 50:
-            self.cover_ventilation_tilting_position()
+        target = max(0, min(100, int(tilt_position)))
+
+        if self._tilt_travel_time <= 0:
+            if target < 50:
+                self.cover_ventilation_tilting_position()
+            else:
+                self.cover_intermediate_position()
+            return
+
+        current = self._tilt_position
+        if current is None:
+            current = 100 if (self._position or 0) >= 50 else 0
+            _LOGGER.debug(
+                "%s: tilt position unknown, assuming %s based on vertical %s",
+                self._attr_name,
+                current,
+                self._position,
+            )
+
+        diff = target - current
+        if abs(diff) < 2:
+            return
+
+        move_time = abs(diff) / 100.0 * self._tilt_travel_time
+
+        if diff > 0:
+            self._transmitter.up(self._channel)
+            self._start_moving(+1)
         else:
-            self.cover_intermediate_position()
+            self._transmitter.down(self._channel)
+            self._start_moving(-1)
+
+        self._timed_tilt_target = target
+        self._timed_tilt_lock_until = time.time() + move_time + 8.0
+
+        def _finish_tilt():
+            _LOGGER.debug(
+                "%s: timed tilt complete — stopping at tilt %s",
+                self._attr_name,
+                target,
+            )
+            self.hass.async_add_executor_job(self._execute_timed_tilt_stop, target)
+
+        self._scheduled_stop = self.hass.loop.call_later(move_time, _finish_tilt)
+
+    def _execute_timed_tilt_stop(self, target):
+        self._transmitter.stop(self._channel)
+        self._stop_moving()
+        self._tilt_position = target
+        self._scheduled_stop = None
 
     # ── response handling ───────────────────────────────────────────────
 
@@ -531,12 +618,14 @@ class EleroCover(CoverEntity, RestoreEntity):
 
         if status == INFO_TOP_POSITION_STOP:
             self._stop_moving(final_position=POSITION_OPEN)
-            self._tilt_position = None
+            self._tilt_position = POSITION_OPEN
+            self._timed_tilt_lock_until = 0.0
             self._closed = False
 
         elif status == INFO_BOTTOM_POSITION_STOP:
             self._stop_moving(final_position=POSITION_CLOSED)
-            self._tilt_position = None
+            self._tilt_position = POSITION_CLOSED
+            self._timed_tilt_lock_until = 0.0
             self._closed = True
 
         elif status == INFO_INTERMEDIATE_POSITION_STOP:
@@ -581,7 +670,8 @@ class EleroCover(CoverEntity, RestoreEntity):
             else:
                 if self._move_start_time is None:
                     self._start_moving(+1)
-                self._tilt_position = None
+                if time.time() >= self._timed_tilt_lock_until:
+                    self._tilt_position = None
 
         elif status in (INFO_START_TO_MOVE_DOWN, INFO_MOVING_DOWN):
             if time.time() < self._tilt_step_lock_until:
@@ -593,11 +683,15 @@ class EleroCover(CoverEntity, RestoreEntity):
             else:
                 if self._move_start_time is None:
                     self._start_moving(-1)
-                self._tilt_position = None
+                if time.time() >= self._timed_tilt_lock_until:
+                    self._tilt_position = None
 
         elif status == INFO_STOPPED_IN_UNDEFINED_POSITION:
             self._stop_moving()
-            self._tilt_position = None
+            if time.time() < self._timed_tilt_lock_until:
+                self._tilt_position = self._timed_tilt_target
+            # Otherwise keep whatever _stop_moving inferred (or the prior
+            # tilt value if the move was too short to fully reposition slats).
 
         elif status == INFO_NO_INFORMATION:
             self._stop_moving()
