@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -91,8 +92,13 @@ class EleroHub:
         if listener := self._listeners.get(channel):
             listener(status)
 
-    async def async_command(self, channel: int, command: str) -> None:
-        """Send a movement command and wait until the stick has handled it."""
+    async def async_command(self, channel: int, command: str) -> float:
+        """Send a movement command and wait until the stick has handled it.
+
+        Returns the `time.monotonic()` at which the command went out. With
+        several covers (e.g. a cover group) commands queue up, so this can be
+        noticeably later than the call; the drive only reacts once it is sent.
+        """
         if command not in COMMANDS:
             raise ValueError(command)
         future = self.hass.loop.create_future()
@@ -101,7 +107,7 @@ class EleroHub:
         self._queue.put_nowait(
             _Job(priority, next(self._seq), lambda: func(channel), future)
         )
-        await future
+        return await future
 
     @callback
     def async_request_poll(self, channel: int) -> None:
@@ -117,6 +123,15 @@ class EleroHub:
                 poll_channel=channel,
             )
         )
+
+    @callback
+    def async_request_poll_others(self, channel: int) -> None:
+        """Poll every other registered channel, e.g. after one cover noticed a
+        move started on a physical remote, which often drives several channels
+        (an Elero group remote)."""
+        for other in self._listeners:
+            if other != channel:
+                self.async_request_poll(other)
 
     @callback
     def async_request_check(self) -> None:
@@ -140,6 +155,7 @@ class EleroHub:
             job = await self._queue.get()
             if job.poll_channel is not None:
                 self._pending_polls.discard(job.poll_channel)
+            sent = time.monotonic()
             try:
                 await self.hass.async_add_executor_job(job.func)
             except Exception as exc:  # noqa: BLE001 - keep the queue alive
@@ -148,4 +164,4 @@ class EleroHub:
                     job.future.set_exception(exc)
             else:
                 if job.future and not job.future.done():
-                    job.future.set_result(None)
+                    job.future.set_result(sent)

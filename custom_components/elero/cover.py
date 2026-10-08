@@ -211,6 +211,7 @@ class _Move:
     preset: PresetOptions | None = None
     learn: bool = False  # full run from one end stop, usable for learning
     last_moving_seen: float | None = None
+    stopping: bool = False  # STOP is queued; the move ends when it goes out
     timers: list[CALLBACK_TYPE] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -428,12 +429,18 @@ class EleroCover(CoverEntity, RestoreEntity):
         *,
         duration: float | None = None,
         preset: PresetOptions | None = None,
-    ) -> None:
+        schedule: bool = True,
+    ) -> _Move:
+        """Start tracking a move.
+
+        Moves we command are created with `schedule=False` and re-anchored by
+        `_async_send_move` once the command has actually gone out.
+        """
         # Freeze the estimate of any running move without reporting it stopped.
         start = self._current()
         self._cancel_move_timers()
         self._state = start
-        self._move = _Move(
+        self._move = move = _Move(
             direction=direction,
             kind=kind,
             started=self._now(),
@@ -446,14 +453,8 @@ class EleroCover(CoverEntity, RestoreEntity):
                 and start.position == (CLOSED if direction == UP else OPEN)
             ),
         )
-        if duration is not None:
-            self._later(duration, self._async_on_move_duration_elapsed)
-        if kind == MOVE_RUN:
-            # Poll from shortly before the drive should reach its end stop.
-            expected = self._expected_run_time(start, direction)
-            self._later(expected * 0.85, self._async_endgame_poll)
-        elif kind == MOVE_EXTERNAL:
-            self._later(POLL_INTERVAL_MOVING, self._async_external_poll)
+        if schedule:
+            self._schedule_move_timers(move)
         self._ui_tick = async_track_time_interval(
             self.hass,
             callback(lambda _now: self.async_write_ha_state()),
@@ -467,6 +468,60 @@ class EleroCover(CoverEntity, RestoreEntity):
             start,
         )
         self.async_write_ha_state()
+        return move
+
+    def _schedule_move_timers(self, move: _Move) -> None:
+        elapsed = self._now() - move.started
+        if move.duration is not None:
+            self._later(move.duration - elapsed, self._async_on_move_duration_elapsed)
+        if move.kind == MOVE_RUN:
+            # Poll from shortly before the drive should reach its end stop.
+            expected = self._expected_run_time(move.start, move.direction)
+            self._later(expected * 0.85 - elapsed, self._async_endgame_poll)
+        elif move.kind == MOVE_EXTERNAL:
+            self._later(POLL_INTERVAL_MOVING, self._async_external_poll)
+
+    async def _async_send_move(self, move: _Move, command: str) -> float | None:
+        """Send the command that starts `move`, then anchor it to the send time.
+
+        The stick sends one request at a time, so with several covers (a
+        cover group, or polls in flight) a command can go out noticeably
+        later than requested. The drive only starts moving then, so that is
+        when the move, its timed stop and its polls are measured from.
+        """
+        try:
+            sent = await self._hub.async_command(self._channel, command)
+        except Exception:
+            if self._move is move:
+                self._end_move()
+            raise
+        if self._move is not move or move.stopping:
+            return None
+        move.started = sent
+        move.started_wall = time.time() - (self._now() - sent)
+        self._schedule_move_timers(move)
+        self.async_write_ha_state()
+        return sent
+
+    async def _async_stop(self, move: _Move | None) -> None:
+        """Send STOP and end `move` where the drive was when STOP went out."""
+        if move is not None:
+            move.stopping = True
+            for cancel in move.timers:
+                cancel()
+            move.timers.clear()
+        try:
+            sent = await self._hub.async_command(self._channel, "stop")
+        except Exception:
+            if move is not None and self._move is move:
+                self._end_move()
+            raise
+        if move is not None and self._move is move:
+            elapsed = sent - move.started
+            if move.duration is not None:
+                elapsed = min(elapsed, move.duration)
+            self._end_move(advance(move.start, move.direction, elapsed, self._timing))
+        self._schedule_confirm_poll()
 
     @callback
     def _end_move(self, final: CoverState | None = None) -> None:
@@ -500,11 +555,10 @@ class EleroCover(CoverEntity, RestoreEntity):
         if move is None:
             return
         if move.kind == MOVE_TIMED:
-            self.hass.async_create_task(
-                self._hub.async_command(self._channel, "stop"), eager_start=False
-            )
-            self._end_move()
-            self._schedule_confirm_poll()
+            # Keep estimating until STOP actually goes out (the stick may be
+            # busy, e.g. stopping the other covers of a group first).
+            move.duration = None
+            self.hass.async_create_task(self._async_stop(move))
         elif move.kind == MOVE_PRESET:
             self._finish_preset(move)
 
@@ -561,6 +615,7 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     async def _async_preset(self, preset: PresetOptions, command: str) -> None:
         self._pending_target = None
+        move: _Move | None = None
         if preset.mode == PRESET_FIXED:
             current = self._current()
             if current.position is not None:
@@ -568,15 +623,28 @@ class EleroCover(CoverEntity, RestoreEntity):
                     current, preset.position, self._timing
                 )
                 if direction:
-                    self._begin_move(
-                        direction, MOVE_PRESET, duration=seconds, preset=preset
+                    move = self._begin_move(
+                        direction,
+                        MOVE_PRESET,
+                        duration=seconds,
+                        preset=preset,
+                        schedule=False,
                     )
         else:
             self._ignore_movement_until = self._now() + preset.duration + PRESET_GRACE
-            self._begin_move(
-                preset.direction, MOVE_PRESET, duration=preset.duration, preset=preset
+            move = self._begin_move(
+                preset.direction,
+                MOVE_PRESET,
+                duration=preset.duration,
+                preset=preset,
+                schedule=False,
             )
-        await self._hub.async_command(self._channel, command)
+        if move is None:
+            await self._hub.async_command(self._channel, command)
+            return
+        sent = await self._async_send_move(move, command)
+        if sent is not None and preset.mode != PRESET_FIXED:
+            self._ignore_movement_until = sent + preset.duration + PRESET_GRACE
 
     @callback
     def _finish_preset(self, move: _Move) -> None:
@@ -617,6 +685,10 @@ class EleroCover(CoverEntity, RestoreEntity):
             self._on_preset_stop(self._opts.ventilation)
         elif status in STATUSES_INTERMEDIATE:
             self._on_preset_stop(self._opts.intermediate)
+        elif self._move is not None and self._move.stopping:
+            # Our STOP is on its way; `_async_stop` ends the move at the time
+            # it went out, which is more precise than this report.
+            pass
         elif status in STATUSES_UP or status in STATUSES_DOWN:
             self._on_moving(UP if status in STATUSES_UP else DOWN)
         elif status == INFO_STOPPED_IN_UNDEFINED_POSITION:
@@ -637,6 +709,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         if self._now() < self._ignore_movement_until:
             return  # stale report of a preset step that already finished
         self._begin_move(direction, MOVE_EXTERNAL)
+        # A remote that moved this cover may have moved others as well.
+        self._hub.async_request_poll_others(self._channel)
 
     @callback
     def _on_end_stop(self, direction: int) -> None:
@@ -673,20 +747,17 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         self._pending_target = None
-        self._begin_move(UP, MOVE_RUN)
-        await self._hub.async_command(self._channel, "up")
+        await self._async_send_move(self._begin_move(UP, MOVE_RUN, schedule=False), "up")
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         self._pending_target = None
-        self._begin_move(DOWN, MOVE_RUN)
-        await self._hub.async_command(self._channel, "down")
+        await self._async_send_move(
+            self._begin_move(DOWN, MOVE_RUN, schedule=False), "down"
+        )
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         self._pending_target = None
-        if self._move is not None:
-            self._end_move()
-        await self._hub.async_command(self._channel, "stop")
-        self._schedule_confirm_poll()
+        await self._async_stop(self._move)
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         target = max(CLOSED, min(OPEN, float(kwargs[ATTR_POSITION])))
@@ -702,17 +773,15 @@ class EleroCover(CoverEntity, RestoreEntity):
             _LOGGER.info(
                 "%s: position unknown, opening fully to calibrate", self.entity_id
             )
-            self._begin_move(UP, MOVE_RUN)
+            move = self._begin_move(UP, MOVE_RUN, schedule=False)
             self._pending_target = target
-            await self._hub.async_command(self._channel, "up")
+            await self._async_send_move(move, "up")
             return
         direction, seconds = time_to_position(current, target, self._timing)
         if seconds < MIN_MOVE_SECONDS:
             return
-        self._begin_move(direction, MOVE_TIMED, duration=seconds)
-        await self._hub.async_command(
-            self._channel, "up" if direction == UP else "down"
-        )
+        move = self._begin_move(direction, MOVE_TIMED, duration=seconds, schedule=False)
+        await self._async_send_move(move, "up" if direction == UP else "down")
 
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         target = max(CLOSED, min(OPEN, float(kwargs[ATTR_TILT_POSITION])))
@@ -726,10 +795,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         direction, seconds = time_to_tilt(self._current(), target, self._timing)
         if seconds <= 0:
             return
-        self._begin_move(direction, MOVE_TIMED, duration=seconds)
-        await self._hub.async_command(
-            self._channel, "up" if direction == UP else "down"
-        )
+        move = self._begin_move(direction, MOVE_TIMED, duration=seconds, schedule=False)
+        await self._async_send_move(move, "up" if direction == UP else "down")
 
     async def async_open_cover_tilt(self, **kwargs: Any) -> None:
         if self._opts.tilt_buttons == TILT_BUTTONS_SLATS and self._timing.has_tilt:
