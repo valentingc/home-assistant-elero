@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "4.1.0"
+__version__ = "4.1.1"
 
 import logging
 import os
@@ -282,7 +282,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = transmitter
 
     # Register the transmitter stick as a HA "hub" device so individual
-    # covers can attach to it via their `via_device`.
+    # covers can attach to it via their `via_device_id`.
     dev_reg = dr.async_get(hass)
     dev_reg.async_get_or_create(
         config_entry_id=entry.entry_id,

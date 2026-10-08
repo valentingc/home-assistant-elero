@@ -1,5 +1,6 @@
 {
   "name": "Elero Centero",
   "render_readme": true,
-  "version": "3.4.28"
+  "version": "3.4.28",
+  "homeassistant": "2026.8.0"
 }

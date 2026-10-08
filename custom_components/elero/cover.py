@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "4.1.0"
+__version__ = "4.1.1"
 
 import logging
 import time
@@ -20,6 +20,7 @@ from homeassistant.components.cover import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_COVERS, CONF_DEVICE_CLASS, CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -182,6 +183,10 @@ async def async_setup_entry(
     """Set up Elero covers from sub-entries of a config entry."""
     transmitter = hass.data[DOMAIN][entry.entry_id]
     serial = transmitter.get_serial_number()
+    hub_device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, serial), entry.entry_id
+    )
+    hub_device_id = hub_device.id if hub_device else None
 
     by_subentry: dict[str, list[EleroCover]] = {}
     for subentry_id, subentry in entry.subentries.items():
@@ -205,6 +210,7 @@ async def async_setup_entry(
             ),
             unique_suffix=str(int(subentry.data[CONF_CHANNEL])),
             hub_serial=serial,
+            hub_device_id=hub_device_id,
         )
         by_subentry.setdefault(subentry_id, []).append(cover)
 
@@ -256,6 +262,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         tilt_travel_time: float = DEFAULT_TILT_TRAVEL_TIME,
         unique_suffix: str | None = None,
         hub_serial: str | None = None,
+        hub_device_id: str | None = None,
     ):
         self.hass = hass
         self._transmitter = transmitter
@@ -280,8 +287,9 @@ class EleroCover(CoverEntity, RestoreEntity):
             name=name,
             manufacturer="Elero",
             model=device_class,
-            via_device=(DOMAIN, serial),
         )
+        if hub_device_id:
+            self._attr_device_info["via_device_id"] = hub_device_id
 
         self._available = self._transmitter.set_channel(
             self._channel, self.response_handler
