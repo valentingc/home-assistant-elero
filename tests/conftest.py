@@ -105,7 +105,7 @@ def cover_data(
     ventilation: dict | None = None,
     intermediate: dict | None = None,
 ) -> dict[str, Any]:
-    """Cover sub-entry data in the current (4.2) format."""
+    """Cover sub-entry data in the current (4.3) format."""
     return {
         "name": name,
         CONF_CHANNEL: channel,

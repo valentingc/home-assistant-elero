@@ -259,7 +259,7 @@ async def test_add_cover_rejects_used_channel(hass: HomeAssistant) -> None:
 
 
 async def test_reconfigure_prefills_legacy_cover(hass: HomeAssistant) -> None:
-    """A pre-4.2 cover shows its derived settings and is saved in the new format."""
+    """A pre-4.3 cover shows its derived settings and is saved in the new format."""
     legacy = {
         "name": "Living room",
         CONF_CHANNEL: 1,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-__version__ = "4.2.0"
-
 import logging
 import time
 from dataclasses import dataclass, field
@@ -284,7 +282,7 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     async def _async_restore(self) -> None:
         if (state := await self.async_get_last_state()) is not None:
-            # Rounded values, used if no precise data was stored (pre-4.2).
+            # Rounded values, used if no precise data was stored (pre-4.3).
             position = state.attributes.get("current_position")
             tilt = state.attributes.get("current_tilt_position")
             self._state = CoverState(

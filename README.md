@@ -52,7 +52,7 @@ USB stick).
 
 | Requirement | Notes |
 |---|---|
-| Home Assistant **2026.8** or newer | Older versions are not supported since 4.1.1. |
+| Home Assistant **2026.8** or newer | Older versions are not supported since 4.2.0. |
 | Elero Transmitter Stick | 15-channel bidirectional radio stick. Use as many sticks as you need for more than 15 receivers. |
 | Taught-in receivers | Each receiver must be taught-in to a channel (1–15) of the stick before Home Assistant can control it. See the *Centero Operation instructions* on [Elero's download page](https://www.elero.com/en/downloads-service/downloads/). |
 
@@ -135,7 +135,7 @@ describe how *your* drive is programmed for each Elero preset command:
 | **Fixed position** | Where the drive stops, for *Fixed position* (default: ventilation 25 %, intermediate 75 %). |
 | **Step duration** | How long the drive runs, for a short move (default 1 s). |
 
-Covers set up before 4.2 keep working without changes. A single *travel time* is used for
+Covers set up before 4.3 keep working without changes. A single *travel time* is used for
 both directions. If the old *tilt step* was above 0, ventilation becomes *Short move up*
 with the equivalent duration (tilt step % × travel time, e.g. 2 % × 50 s = 1 s).
 Reconfiguring the cover shows these derived values and saves them in the new format.
@@ -467,7 +467,7 @@ logger:
 ```
 
 **Covers fail to load on HA 2026.9+ with `via_device` errors**
-Fixed in 4.1.1. Update the integration.
+Fixed in 4.2.0. Update the integration.
 
 ---
 
@@ -520,8 +520,11 @@ such deprecations can escalate into hard errors (as happened with `via_device` i
 
 ## Changelog
 
-- **4.2.0** (2026-10-08): New motion model with slat phase and separate up/down travel times. The ventilation and intermediate commands can be configured as a fixed position or a short relative move, which fixes covers jumping to 25 % after a relative ventilation step. Ventilation / Intermediate buttons, and an option to make open/close tilt rotate the slats. Optional learning of travel times. Precise state and in-progress moves survive restarts. Per-stick command queue with STOP priority and shorter poll retries. Fast polling near end stops and for moves started on a remote. Channel dropdown with taught-in channels, channel changes keep entities and history, connection check for remote sticks. Unknown statuses no longer reset the position. Diagnostics download; stick counters moved out of state attributes. Cover groups: each member's move is measured from when its command actually left the stick and ends when its STOP did, so group positions stay accurate; a move from a physical remote triggers an immediate poll of the other covers on the stick. Proper HA device classes (blind, shutter, awning, shade). `iot_class` corrected to `local_polling`.
-- **4.1.1** (2026-10-08): Fix covers failing to load on HA 2026.9+: link cover devices to the hub with `via_device_id` instead of the deprecated `via_device`. Minimum HA version is now 2026.8. Added, reconfigured and removed covers now apply without a restart. Command timers are scheduled thread-safely, and the post-move status poll no longer blocks the event loop. Added a test suite.
+- **4.3.3** (2026-10-08): Version numbers in the integration match the release tag again (4.3.0–4.3.2 reported themselves as 4.2.0).
+- **4.3.2** (2026-10-08): No code changes.
+- **4.3.1** (2026-10-08): Cover groups: each member's move is measured from when its command actually left the stick and ends when its STOP did, so group positions stay accurate; a move from a physical remote triggers an immediate poll of the other covers on the stick. Proper HA device classes (blind, shutter, awning, shade). `iot_class` corrected to `local_polling`.
+- **4.3.0** (2026-10-08): New motion model with slat phase and separate up/down travel times. The ventilation and intermediate commands can be configured as a fixed position or a short relative move, which fixes covers jumping to 25 % after a relative ventilation step. Ventilation / Intermediate buttons, and an option to make open/close tilt rotate the slats. Optional learning of travel times. Precise state and in-progress moves survive restarts. Per-stick command queue with STOP priority and shorter poll retries. Fast polling near end stops and for moves started on a remote. Channel dropdown with taught-in channels, channel changes keep entities and history, connection check for remote sticks. Unknown statuses no longer reset the position. Diagnostics download; stick counters moved out of state attributes.
+- **4.2.0** (2026-10-08): Fix covers failing to load on HA 2026.9+: link cover devices to the hub with `via_device_id` instead of the deprecated `via_device`. Minimum HA version is now 2026.8. Added, reconfigured and removed covers now apply without a restart. Command timers are scheduled thread-safely, and the post-move status poll no longer blocks the event loop. Added a test suite.
 - **4.1.0** (2026-05-03): Timed tilt slider for slat positioning (`tilt_travel_time`).
 - **4.0.1** (2026-05-02): Keep a manual tilt step intact when polls catch the drive mid-move.
 - **4.0.0** (2026-05-01): Config flow, cover sub-entries, automatic YAML import, tilt step.

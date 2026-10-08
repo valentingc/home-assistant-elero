@@ -247,7 +247,7 @@ async def test_fixed_ventilation_position(
 async def test_users_existing_config_uses_step(
     hass: HomeAssistant, mock_transmitter, respond, freezer
 ) -> None:
-    """A pre-4.2 sub-entry (tilt step 2 %, 50 s) becomes a 1 s step up."""
+    """A pre-4.3 sub-entry (tilt step 2 %, 50 s) becomes a 1 s step up."""
     legacy = {
         "name": "Living room",
         "channel": 1,

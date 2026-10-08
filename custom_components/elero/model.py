@@ -107,7 +107,7 @@ class CoverOptions:
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any]) -> CoverOptions:
-        """Build options, filling in what older (pre-4.2) sub-entries lack."""
+        """Build options, filling in what older (pre-4.3) sub-entries lack."""
         legacy_travel = float(data.get(CONF_TRAVEL_TIME, DEFAULT_TRAVEL_TIME))
         travel_up = float(data.get(CONF_TRAVEL_TIME_UP, legacy_travel))
         travel_down = float(data.get(CONF_TRAVEL_TIME_DOWN, legacy_travel))
@@ -117,7 +117,7 @@ class CoverOptions:
                 data[CONF_VENTILATION], cls.ventilation
             )
         else:
-            # Before 4.2 a "tilt step" > 0 meant the ventilation button only
+            # Before 4.3 a "tilt step" > 0 meant the ventilation button only
             # nudges the cover up by that many percent of the travel.
             tilt_step = float(data.get(CONF_TILT_STEP, DEFAULT_TILT_STEP))
             ventilation = (
