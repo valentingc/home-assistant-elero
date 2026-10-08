@@ -1,455 +1,450 @@
-
-> ## 🛠 Status: In Development
-> This lib is currently in development. I encourage you to use it and give me your feedback, but there are things that haven't been finalized yet and you can expect some changes.
-
 ![Elero Logo](elero.png) ![Home Assistant Logo](home_assistant_logo.png)
 
-Elero Python lib to the Home Assistant home automation platform
-===============================================================
+# Elero for Home Assistant
 
-[Home Assistant](https://www.home-assistant.io/) is a home automation platform running on Python 3. It is able to track and control all devices at home and offer a platform for automating control.
+A [Home Assistant](https://www.home-assistant.io/) custom integration for controlling
+[Elero](https://www.elero.com) drives — venetian blinds, roller shutters, awnings,
+interior shading and rolling doors — through the **Elero Transmitter Stick** (Centero
+USB stick).
 
-This `elero` platform allows you to control different [Elero](https://www.elero.com) components/devices (such as venetian blinds, a roller shutters, tubular motors, electrical devices, rolling door drives, etc.).
-
----
-
-# Prerequisite
-
-The Elero Transmitter Stick is a 15-channel handheld radio transmitter for bidirectional communication between transmitter and receiver(s).
-
-To use the receiver control of the Home Assistant, at least one receiver must be taught-in into the Elero Transmitter Stick. For further details of the learning procedure please visit the [Elero's Downloads webpage](https://www.elero.com/en/downloads-service/downloads/) and find the [Centero Operation instruction](https://www.elero.com/en/downloads-service/downloads/?tx_avelero_downloads%5Bdownload%5D=319&tx_avelero_downloads%5Baction%5D=download&cHash=5cf4212966ff0d58470d8cc9aa029066)
-
-
-# Limitations
-
-1. According to the [documentation of the Elero USB Transmitter](https://www.elero.com/en/downloads-service/downloads/?tx_avelero_downloads%5Baction%5D=search&tx_avelero_downloads%5Blanguage%5D=0&tx_avelero_downloads%5Bquery%5D=stick&tx_avelero_downloads%5Barchive%5D=&cHash=dd3c489f199ddf8e24e38a1d897d2812), more Elero devices could be controlled at the same time with one command. However, It does not work. This causes many timing and control problems. I tried to contact with Elero via mail however the company has so far given no answer to my question about this error.
-
-
-# Elero features
-
-The Elero Transmitter stick supports the following Elero device features:
-- up
-- down
-- stop
-- intermediate position
-- ventilation / turning position
+- UI setup through a config flow: no YAML required
+- Local USB sticks are discovered automatically; remote sticks are reached over TCP via `ser2net`
+- One device per cover, grouped under its transmitter stick
+- Time-based position tracking with a live position slider
+- Tilt support: Elero intermediate / ventilation positions, a configurable *tilt step*,
+  and a timed tilt slider for slat positioning
+- Automatic one-time migration of legacy YAML configuration
 
 ---
 
-# Configuration of Elero platform
-As many transmitters can be used as many needed.
-You could use as many transmitters as you want. So, you can control more than 15 devices. The connected transmitter stickes are discoveried by automaticly, so by default you do not need to configure them.
-In some special cases, you can configure every Elero USB Transmitter stick in your installation, add and setup the following settings to your `configuration.yaml` file to every stick:
+## Contents
 
-- **serial_number:**
-    - **description:** The serial number of the given Elero Transmitter Stick.
-    - **required:** false
-    - **type:** string
-    - **default:** -
-- **baudrate:**
-    - **description:** Baud Rate as bits per second.
-    - **required:** false
-    - **type:** integer
-    - **default:** 38400
-- **bytesize:**
-    - **description:** Number of data bits.
-    - **required:** false
-    - **type:** integer
-    - **default:** 8
-- **parity:**
-    - **description:**  Enable parity checking.
-    - **required:** false
-    - **type:** string
-    - **default:** "N"
-- **stopbits:**
-    - **description:** Number of stop bits.
-    - **required:** false
-    - **type:** integer
-    - **default:*** 1
-
-
-The connected Elero transmitters are automatically recognized and configured by HA automatically.
-The serial numbers of the connected transmitters can be found in the HA log and are needed for the further configuration. 
-Make sure you have the logger set to the INFO level to see the log message. You can do this by adding following to the config file `configuration.yaml`:
-
-```yaml
-logger:
-  default: info
-```
-Then you should see the following long line after a restart of HA:
-
-```
-Elero - an Elero Transmitter Stick is found on port: '<serial port>' with serial number: '<serial number>'.
-```
-
-Make sure to disable the logger config again afterwards to avoid excessive logging!
-
-The given serial number of a transmitter should be used to match a HA channel to the transmitter in the yaml config file.
-
-
-The connected devices could be configured with the followings in the `configuration.yaml` file:
-
-Example of the configuration:
-
-```yaml
-# Example configuration.yaml entry
-elero:
-    transmitters:
-        - serial_number: 00000000
-          baudrate: 38400
-          bytesize: 8
-          parity: 'N'
-          stopbits: 1
-```
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Setup](#setup)
+  - [1. Add a transmitter stick](#1-add-a-transmitter-stick)
+  - [2. Add covers](#2-add-covers)
+  - [Cover options](#cover-options)
+- [How it works](#how-it-works)
+  - [Feature mapping](#feature-mapping)
+  - [Position tracking](#position-tracking)
+  - [Tilt step](#tilt-step)
+  - [Timed tilt slider](#timed-tilt-slider)
+  - [State attributes](#state-attributes)
+- [Remote stick via ser2net](#remote-stick-via-ser2net)
+- [Migrating from YAML](#migrating-from-yaml)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [Development](#development)
+- [Changelog](#changelog)
+- [Contributing](#contributing)
 
 ---
 
-# Configuration of the Elero cover component
+## Requirements
 
-To enable an Elero component like a covers in an installation, add the following to into the `configuration.yaml` file:
+| Requirement | Notes |
+|---|---|
+| Home Assistant **2026.8** or newer | Older versions are not supported since 4.1.1. |
+| Elero Transmitter Stick | 15-channel bidirectional radio stick. Use as many sticks as you need for more than 15 receivers. |
+| Taught-in receivers | Each receiver must be taught-in to a channel (1–15) of the stick before Home Assistant can control it. See the *Centero Operation instructions* on [Elero's download page](https://www.elero.com/en/downloads-service/downloads/). |
 
-- **serial_number:**
-    - **description:** The serial number of the given Elero Transmitter Stick.
-    - **required:** true
-    - **type:** integer
-    - **default:** -
-    - **value:** your choose
-- **name:**
-    - **description:** Name of the cover that is displayed on the UI.
-    - **required:** true
-    - **type:** string
-    - **default:** -
-    - **value:** your choose
-- **channel:**
-    - **description:** The learned channel number on the Elero USB Stick.
-    - **required:** true
-    - **type:** integer
-    - **default:** -
-    - **value:** one number between 1-15
-- **device class:**
-    - **description:** The class of the cover. It affects the device state and icon that is displayed on the UI.
-    - **required:** true
-    - **type:** string
-    - **default:** -
-    - **value:**
-        - venetian blind
-        - roller shutter
-        - awning
-        - rolling door
-- **supported features:**
-    - **description:** Functionalities of the cover.
-    - **required:** true
-    - **type:** string
-    - **default:** -
-    - **value:**
-        - up (Elero UP)
-        - down (Elero DOWN)
-        - stop (Elero STOP)
-        - set_position (0=DOWN, 25=VENT, 50=MOVING/UNDEF, 75=INT, 100=UP)
-        - open_tilt (Elero INTERMEDIATE)
-        - close_tilt (Elero VENTILATION)
-        - stop_tilt (Elero STOP)
-        - set_tilt_position (unsupported)
-
-Example of a simple cover setup:
-
-```yaml
-# Example configuration.yaml entry
-cover:
-    - platform: elero
-      covers:
-          bathroom_small:
-              serial_number: 00000000
-              name: Shower
-              channel: 1
-              device_class: roller shutter
-              supported_features:
-                  - up
-                  - down
-                  - stop
-```
-
-## Cover 'Position' and 'Tilt position' Sliders
-
-Unfortunately, by default, the Position slider is not configurable on a cover so, the 'step' of the slider either. Thus, the `set_position` and the `set_tilt_position` functions are not usable. Another problem that the Elero devices are not supporting these functions.
-
-For the Elero 'intermediate' function use the `open_tilt` HA function and the Elero 'ventilation' function use the `close_tilt` HA function.
-
-Nevertheless, these controls are shown and useable only if the pop-up window of the given cover is open.
-
-Alternative methods for the Elero 'intermediate' and the 'ventilation' functions:
-
-1. [Call a Service](https://www.home-assistant.io/docs/scripts/service-calls/)
-
-```yaml
-entities:
-  - name: Intermediate
-    service: cover.close_cover_tilt
-    service_data:
-      entity_id: cover.all_cover_group
-    type: call-service
-  - name: Ventilation
-    service: cover.open_cover_tilt
-    service_data:
-      entity_id: cover.all_cover_group
-    type: call-service
-```
-
-
-2. An [`input_number`](https://www.home-assistant.io/integrations/input_number/) slider with automation.
-
-```yaml
-input_number:
-    diningroom_set_position:
-        name: Position
-        mode: slider
-        initial: 0
-        min: 0
-        max: 100
-        step: 25
-
-automation:
-  - alias: diningroom_set_position
-    trigger:
-        platform: numeric_state
-        entity_id: input_number.diningroom_set_position
-        to: 25
-    action:
-        - service: cover.close_cover_tilt
-          entity_id:
-            - cover.diningroom
-
-```
-
-3. An [`input_select`](https://www.home-assistant.io/integrations/input_select/) Scene with automation.
-
-```yaml
-input_select:
-    scene_diningroom:
-        name: Scene
-        options:
-            - open
-            - close
-            - stop
-            - intermediate
-            - ventilation
-
-automation:
-  - alias: Diningroom scene
-    trigger:
-      platform: state
-      entity_id: input_select.scene_diningroom
-      to: intermediate
-    action:
-        - service: cover.close_cover_tilt
-          entity_id:
-            - cover.diningroom
-```
----
-
-## Cover groups
-To create `Cover Groups` in an installation, add the following into the `configuration.yaml` file:
-
-```yaml
-# Example configuration.yaml entry
-cover:
-    - platform: group
-      name: "All Cover"
-      entities:
-          - cover.shower
-          - cover.george
-```
+The stick can be plugged into the Home Assistant host directly, or into another machine
+(e.g. a Raspberry Pi) that exposes it over the network with `ser2net`.
 
 ---
 
-# Installation of the lib
-## Manual Installation
-Just copy the contents of the `custom_components` folder into the Home Assistant `../config/custom_components/` folder.
+## Installation
 
-Configurate the `/config/configuration.yaml` file and its all linked files like `covers` and `groups`, etc. Restart the Home Assistant.
+### HACS (recommended)
 
-## HACS Installation
-You can use [HACS](https://hacs.xyz) to install the custom component. You need to add this repository https://github.com/valentingc/home-assistant-elero as a custom repository in HACS.
+1. In HACS, open **⋮ → Custom repositories**.
+2. Add `https://github.com/valentingc/home-assistant-elero` with category **Integration**.
+3. Install **Elero Centero** and restart Home Assistant.
 
-## Example config files
-Some example files can be found in the `config` folder as a help or starting point.
+### Manual
 
----------------
-
-# Automation
-
-It is possible to specify triggers for automation of your covers.
-
-```yaml
-# Example automations.yaml entry
-# Covers
-    - alias: 'Close the covers after sunset'
-      trigger:
-        platform: sun
-        event: sunset
-        offset: '+00:30:00'
-      action:
-        service: cover.close_cover
-        entity_id: cover.all_Cover
-```
----
-
-# Report an issue:
-
-Please use the Github Issues section to report a problem or feature request: https://github.com/valentingc/home-assistant-elero/issues/new
-
-
-# Known issues:
-
-Please see the Issues section: https://github.com/valentingc/home-assistant-elero/issues
-
-# Contribution:
-
-Please, Test first!
-
-For minor fixes and documentation, please go ahead and submit a pull request. A gentle introduction to the process can be found [here](https://www.freecodecamp.org/news/a-simple-git-guide-and-cheat-sheet-for-open-source-contributors/).
-
-Check out the list of issues. Working on them is a great way to move the project forward.
-
-Larger changes (rewriting parts of existing code from scratch, adding new functions) should generally be discussed by opening an issue first.
-
-Feature branches with lots of small commits (especially titled "oops", "fix typo", "forgot to add file", etc.) should be squashed before opening a pull request. At the same time, please refrain from putting multiple unrelated changes into a single pull request.
+1. Copy `custom_components/elero` into your Home Assistant `config/custom_components/` folder.
+2. Restart Home Assistant.
 
 ---
 
-**If you have any question or you have faced with trouble, do not hesitate to contact me, all comments, insight, criticism is welcomed!**
+## Setup
+
+Everything is configured in the UI under **Settings → Devices & services**.
+
+### 1. Add a transmitter stick
+
+**Add integration → Elero**, then choose a connection type:
+
+- **Local USB stick**: the integration lists every connected USB device that reports
+  itself as an *elero Transmitter Stick*. Pick yours by serial number. If none is found,
+  the flow aborts with *"No Elero transmitter sticks were detected on this host"*.
+- **Remote (ser2net)**: enter the stick's serial number and the `host:port` of the
+  `ser2net` server (see [Remote stick via ser2net](#remote-stick-via-ser2net)).
+
+Each stick becomes one config entry and appears as a hub device named
+`Elero <serial>`. Repeat for additional sticks.
+
+Local sticks use 38400 baud, 8 data bits, no parity and 1 stop bit.
+
+### 2. Add covers
+
+Covers are **sub-entries** of a transmitter. Open the transmitter's integration entry and
+choose **Add cover**. Each cover gets its own device, linked to the transmitter hub.
+
+To change a cover later, use **Reconfigure** on its sub-entry. To remove it, delete
+the sub-entry.
+
+### Cover options
+
+| Option | Default | Description |
+|---|---|---|
+| **Name** | — | Display name of the cover. |
+| **Channel** | `1` | The stick channel (1–15) the receiver is taught-in to. |
+| **Device class** | `venetian blind` | `venetian blind`, `roller shutter`, `awning`, `interior shading` or `rolling door`. Rolling door maps to HA's `garage` class; all others map to `window`. |
+| **Supported features** | `up`, `down`, `stop` | Which controls HA shows. See [Feature mapping](#feature-mapping). |
+| **Travel time** | `50` s | Seconds for a full open ↔ close run. Used for position tracking and `set_position`. Measure it with a stopwatch for accurate positions. |
+| **Tilt step** | `2` % | Position change applied each time *close tilt* is pressed. `0` disables it. See [Tilt step](#tilt-step). |
+| **Tilt travel time** | `2` s | Seconds for the slats to swing fully open ↔ closed. `0` disables the timed tilt slider. See [Timed tilt slider](#timed-tilt-slider). |
 
 ---
 
-# Version
-* 3.3.2 - Jan 03, 2025 - try to monitor ser2net connection and retry failed connections  
-* 3.3.1 - March 11, 2023 [Fix Deprecated Constant Usage](https://github.com/W00D00/home-assistant-elero/pull/45)
-* 3.3 - May 12, 2023 [Using remote transmitter with ser2net](https://github.com/W00D00/home-assistant-elero/pull/40) & [Fix execution on HA2023.5.](https://github.com/W00D00/home-assistant-elero/pull/43)
-* 3.2.2 - November 17, 2022 [Introduce the unique ID](https://github.com/W00D00/home-assistant-elero/pull/38)
-* 3.2.1 - March 10, 2022 [Fix TypeError on HA Shutdowm](https://github.com/W00D00/home-assistant-elero/pull/36)
-* 3.2.0 - March 10, 2022 [Added support for HACS](https://github.com/W00D00/home-assistant-elero/issues/23)
-* 3.1.0 - March 5, 2022 [Update dependencies for pip 20.3](https://github.com/W00D00/home-assistant-elero/issues/29)
-* 3.0.0 - April 23, 2021 [Update manifest.json with version.](https://github.com/W00D00/home-assistant-elero/commit/d6bce117bc26c9b4cf54b649060e8ea3a8538816)
-* 3.0 - Jan 19, 2020 [Appling required HA style guideline.](https://github.com/W00D00/home-assistant-elero/commit/e50debc234091f9b16261e9f20e9d90c9604f308)
-* 2.92 - Jan 05, 2020 - [Refactor the serial write/read processes to solve the group problem. Versioning.](https://github.com/W00D00/home-assistant-elero/issues/11)
-* 2.91 - Jan 02, 2020 - [Serial write/read improvement.](https://github.com/W00D00/home-assistant-elero/issues/11)
-* 2.9 - Dec 30, 2019 - [Serial write/read improvement.](https://github.com/W00D00/home-assistant-elero/issues/11)
-* 2.8 - Dec 24, 2019 - [Define serial read and write time outs. Extend the HA states with Elero states.](https://github.com/W00D00/home-assistant-elero/issues/11)
-* 2.7 - Dec 13, 2019 - [The intermediate and ventilation commands and the statuses do not match to each other.](https://github.com/W00D00/home-assistant-elero/issues/10)
-* 2.6 - Dec 8, 2019 - [The ventilation/intermediate functions are mixed up correction. New position slider with all Elero commands](https://github.com/W00D00/home-assistant-elero/issues/10)
-* 2.5 - Dec 5, 2019 - [Response and cover position slider handling.](https://github.com/W00D00/home-assistant-elero/issues/8)
-* 2.4 - Nov 16, 2019 - 'Position' slider is usable, [Response handling improvement](https://github.com/W00D00/home-assistant-elero/issues/8)
-* 2.3 - Jul 15, 2019 - `no response` handling correction
-* 2.2 - Jun 27, 2019 - New `no response` handling
-* 2.1 - Jun 26, 2019 - [Store the Elero channels into the transmitter object](https://github.com/W00D00/home-assistant-elero/issues/6)
-* 2.0 - Jun 21, 2019 - [Discover USB devices automatically](https://github.com/W00D00/home-assistant-elero/issues/4)
-* 1.6 - Mar 10, 2019 - Correction of the implementation of the intermediate, ventilation position Function
-* 1.5 - Nov 25, 2018 - Upper (9-15) channel state handling correction
-* 1.4 - Oct 20, 2018 - Implementation of the Ventilation/Tilt and Intermediate position
-* 1.3 - Sep 28, 2018 - Different Elero device handling
-* 1.2 - Jul 9, 2018 - New State system
-* 1.1 - Jun 24, 2018 - Release for beta test
-* 1.0 - Jun 16, 2018 - Initial release
+## How it works
 
+### Feature mapping
 
+| Feature | HA control | What is sent to the drive |
+|---|---|---|
+| `up` | Open | Elero **UP** |
+| `down` | Close | Elero **DOWN** |
+| `stop` | Stop | Elero **STOP** |
+| `set_position` | Position slider | UP or DOWN, followed by a timed **STOP** (see below) |
+| `open_tilt` | Open tilt | Elero **intermediate position** |
+| `close_tilt` | Close tilt | Elero **ventilation / tilting position** (plus [tilt step](#tilt-step)) |
+| `stop_tilt` | Stop tilt | Elero **STOP** |
+| `set_tilt_position` | Tilt slider | Short timed UP/DOWN pulse (see [Timed tilt slider](#timed-tilt-slider)) |
 
+Positions use HA's convention: `0` = closed, `100` = open. When the drive reports one of
+its fixed stop positions, the cover snaps to it:
 
+| Drive status | Position |
+|---|---|
+| Top position stop | 100 |
+| Intermediate position stop | 75 |
+| Tilt / ventilation position stop | 25 |
+| Bottom position stop | 0 |
 
-# Remote connection
+### Position tracking
 
-Connect the Elero component to an USB stick that is connected to a Raspberry PI
+Elero drives report *where they stopped*, not a percentage. The integration estimates the
+position from the configured **travel time**:
 
-## Installation of ser2net on a Raspberry PI
+- While moving, the position is interpolated in real time from the start position,
+  the direction and the elapsed time.
+- `set_position` computes how long to drive (`|target − current| / 100 × travel time`),
+  sends UP or DOWN, then sends STOP when that time has elapsed.
+- If the position is unknown (e.g. right after setup), `set_position` first opens the
+  cover fully to calibrate, then moves to the target.
+- Each time the drive reaches a known stop (top, bottom, intermediate, ventilation), the
+  estimate is corrected, so drift does not build up.
+- The last known position is restored after a Home Assistant restart.
+
+### Tilt step
+
+Many Elero remotes reprogram the ventilation/tilting button to make a small slat tilt
+rather than drive to a fixed position. With a **tilt step** greater than 0, every
+*close tilt* press raises the tracked position by that many percent (up to 100; no change
+when already fully open). For 10 seconds afterwards, ventilation and movement reports from
+the drive are ignored so they cannot overwrite the adjusted position.
+
+### Timed tilt slider
+
+With a **tilt travel time** greater than 0, the tilt slider positions the slats by pulsing
+the motor briefly: it sends UP (to open) or DOWN (to close) for
+`|target − current| / 100 × tilt travel time` seconds, then STOP.
+
+- If the tilt is unknown, it is assumed open when the cover is at least half open,
+  and closed otherwise.
+- The vertical position drifts slightly during a tilt pulse. It is corrected the next time
+  the cover reaches the top or bottom.
+- Any regular movement that lasts at least the tilt travel time sets the slats fully open
+  (after moving up) or fully closed (after moving down).
+
+With a tilt travel time of `0`, the slider falls back to two states: below 50 sends
+*ventilation*, 50 and above sends *intermediate*.
+
+### State attributes
+
+Each cover exposes diagnostic attributes:
+
+| Attribute | Meaning |
+|---|---|
+| `elero_state` | Last raw status reported by the drive (e.g. `top position stop`, `moving down`, `blocking`, `overheated`). |
+| `channel`, `travel_time`, `tilt_step`, `tilt_travel_time` | Current configuration. |
+| `move_start_position` | Position at which the current movement started, if moving. |
+| `last_command_ts`, `last_response_ts` | Unix timestamps of the last command sent to, and response received from, the stick. |
+| `error_count`, `timeout_count`, `reconnect_count`, `checksum_error_count`, `consecutive_failures` | Stick communication health counters. |
+
+Home Assistant polls each drive for its status every 30 seconds, and once more after a
+full open or close run. If the stick has not answered for 5 minutes, a watchdog sends an
+*Easy Check* to keep the connection alive.
+
+---
+
+## Remote stick via ser2net
+
+You can plug the stick into another machine, such as a Raspberry Pi, and expose it over
+TCP with [`ser2net`](https://github.com/cminyard/ser2net).
+
+### Install ser2net
 
 ```bash
-sudo rpi-update
-
 sudo apt-get install ser2net
 ```
 
-ser2net version 4.3.3 will be installed and a YAML configuration will be used.
+These instructions use ser2net 4.x with its YAML configuration.
 
+### Configure ser2net
 
-### Configuration of ser2net
-
-Connect the Elero transmitter stick to the Raspberry PI
-
-For finding the ID of Elero transmitter call
+Find the stick's stable device path:
 
 ```bash
 ls /dev/serial/by-id
-``` 
-
-
-Update the ser2net.yaml configuration
-```
-sudo nano /etc/ser2net.yaml
 ```
 
-and add the following configuration to the file. Use the ID of your stick.
+Add a connection to `/etc/ser2net.yaml` (replace the ID with yours):
 
 ```yaml
-connection: &con02
+connection: &elero
   accepter: tcp,20109
-  enable: off
- #connector: serialdev,/dev/ttyUSB1,38400n81,local
+  enable: on
   connector: serialdev,/dev/serial/by-id/usb-elero_GmbH_Transmitter_Stick_AU00JHUU-if00-port0,38400n81,local
   options:
     kickolduser: true
 ```
 
+Then restart it with `sudo service ser2net restart`.
 
-### Fix problems of starting ser2net service after reboot
+In Home Assistant, add the transmitter with **Remote (ser2net)**. Use serial number
+`AU00JHUU` and address `192.168.10.29:20109`, with your own values.
 
-The manually ser2net application has some problems after raspberry pi's reboot. The USB-sticks can't be hosted as TCP ports and
-the `sudo service ser2net status` shows Invalid name/port.
+### ser2net does not come up after reboot
 
-This can be simply fixed by a manual restart of the service `sudo service ser2net restart`.
+Sometimes ser2net starts before the USB stick is ready, and `sudo service ser2net status`
+reports *Invalid name/port*. Restarting it 30 seconds after boot fixes this
+(`sudo crontab -e`):
 
-
-This manual restart can be automatically called using crontab.
-Add the restart 30s after a reboot (Absolute paths must be set in the crontab)
-
-```
-sudo crontab -e
-```
-and add the following line to the file
 ```
 @reboot /usr/bin/sleep 30 && /usr/sbin/service ser2net restart
 ```
 
-### Helper tools
-Helper command to show open ports: `ss -tulw`
+### Helpers
 
-
-Helper script `list_ports.py` to show information of the USB device
+- Show listening ports: `ss -tulw`
+- Show USB serial devices along with their serial numbers:
 
 ```python
 from serial.tools import list_ports
 
-if __name__ == "__main__":
-  
-  for cp in list_ports.comports():
-    print(cp)
-    print("Device:", cp.device)
-    print("Serial Number:", cp.serial_number)
-    print("Product:", cp.product)
-    print("Manufacturer:", cp.manufacturer)
-    print("----")
+for cp in list_ports.comports():
+    print(cp.device, cp.serial_number, cp.product, cp.manufacturer)
 ```
 
+---
 
+## Migrating from YAML
 
+YAML configuration is **deprecated**, but it is still read and imported automatically:
 
-## Homeassistant configuration of remote transmitters
+1. On startup, every transmitter under `elero:` (`transmitters:` and
+   `remote_transmitters:`) is imported as a config entry.
+2. Every `cover: - platform: elero` cover is imported as a cover sub-entry of the
+   transmitter whose `serial_number` it references. Covers whose channel already has a
+   sub-entry are skipped, so the import is safe to repeat.
+3. A repair issue, *"Elero YAML configuration is deprecated"*, appears in
+   **Settings → System → Repairs**.
 
-The following values must be set to configure the Elero component to use remote transmitters. The serial number, the IP address and the port must match with the values configured before.
+Once the transmitters and covers show up under **Settings → Devices & services**, remove
+the `elero:` block and the `platform: elero` covers from `configuration.yaml` and restart.
+
+Legacy YAML format, for reference:
 
 ```yaml
 elero:
-    remote_transmitters:
-        - serial_number: AU00JHUU
-          address: "192.168.10.29:20109"
+  transmitters:
+    - serial_number: AU00JHUU      # optional for a single local stick
+  remote_transmitters:
+    - serial_number: AU00JHUV
+      address: "192.168.10.29:20109"
+
+cover:
+  - platform: elero
+    covers:
+      living_room:
+        serial_number: AU00JHUU
+        name: Living room
+        channel: 1
+        device_class: venetian blind
+        supported_features: [up, down, stop, set_position, open_tilt, close_tilt]
+        travel_time: 45
+        tilt_step: 2
+        tilt_travel_time: 2
 ```
 
+---
 
+## Examples
+
+Close all covers 30 minutes after sunset:
+
+```yaml
+automation:
+  - alias: Close covers after sunset
+    triggers:
+      - trigger: sun
+        event: sunset
+        offset: "00:30:00"
+    actions:
+      - action: cover.close_cover
+        target:
+          entity_id: cover.all_covers
+```
+
+Dashboard buttons for the intermediate and ventilation positions:
+
+```yaml
+type: entities
+entities:
+  - type: button
+    name: Intermediate
+    action_name: Go
+    tap_action:
+      action: perform-action
+      perform_action: cover.open_cover_tilt
+      target:
+        entity_id: cover.living_room
+  - type: button
+    name: Ventilation
+    action_name: Go
+    tap_action:
+      action: perform-action
+      perform_action: cover.close_cover_tilt
+      target:
+        entity_id: cover.living_room
+```
+
+Use HA's [Group helper](https://www.home-assistant.io/integrations/group/)
+(**Settings → Devices & services → Helpers → Group → Cover group**) to control several
+covers together.
+
+More legacy examples are in the [`config`](config/) folder.
+
+---
+
+## Troubleshooting
+
+**"No Elero transmitter sticks were detected on this host"**
+The stick is not visible to Home Assistant. Check that it is plugged in and, in a
+container or VM, passed through to Home Assistant. Only USB devices that report
+manufacturer *elero* and product *Transmitter Stick* are offered.
+
+**Transmitter shows "Failed to set up" / retrying**
+The stick did not answer during setup (raised as `ConfigEntryNotReady`). Home Assistant
+retries automatically. For remote sticks, check that the `ser2net` server is reachable
+and that no other client holds the port.
+
+**Position drifts or is wrong**
+Measure the real full-travel time and update **Travel time**. A full open or close run
+recalibrates the position.
+
+**Debug logging**
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.elero: debug
+```
+
+**Covers fail to load on HA 2026.9+ with `via_device` errors**
+Fixed in 4.1.1. Update the integration.
+
+---
+
+## Limitations
+
+- **Group commands.** According to Elero's documentation, one command can address several
+  channels at once, but this is unreliable in practice. The integration therefore sends a
+  separate command to each channel.
+- **Positions are estimates.** Elero drives report fixed stop positions only. Intermediate
+  percentages are calculated from travel times and can drift until the next full run.
+- **Multiple controllers.** Movements triggered from a physical remote are only picked up at
+  the next poll (up to 30 s later), so positions reached that way are less precise.
+
+---
+
+## Development
+
+The tests run the integration inside a real Home Assistant core using
+[`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component),
+with the transmitter replaced by a fake, so no hardware is needed.
+
+```bash
+python3.14 -m venv .venv
+.venv/bin/pip install -r requirements_test.txt
+.venv/bin/pytest
+```
+
+`requirements_test.txt` pins the Home Assistant version under test. To test against another
+release, bump `pytest-homeassistant-custom-component`; each of its releases pins exactly
+one Home Assistant version.
+
+Any deprecation that Home Assistant reports for `elero` fails the tests. In production,
+such deprecations can escalate into hard errors (as happened with `via_device` in HA
+2026.9), so they are caught here first.
+
+---
+
+## Changelog
+
+- **4.1.1** (2026-10-08): Fix covers failing to load on HA 2026.9+: link cover devices to the hub with `via_device_id` instead of the deprecated `via_device`. Minimum HA version is now 2026.8. Added, reconfigured and removed covers now apply without a restart. Command timers are scheduled thread-safely, and the post-move status poll no longer blocks the event loop. Added a test suite.
+- **4.1.0** (2026-05-03): Timed tilt slider for slat positioning (`tilt_travel_time`).
+- **4.0.1** (2026-05-02): Keep a manual tilt step intact when polls catch the drive mid-move.
+- **4.0.0** (2026-05-01): Config flow, cover sub-entries, automatic YAML import, tilt step.
+- **3.4.x** (2025–2026): Dynamic position calculation, refactored movement logic, diagnostic attributes, lock and connection-safety fixes.
+- **3.3.2** (2025-01-03): Monitor the ser2net connection and retry failed connections.
+- **3.3.1** (2023-03-11): [Fix deprecated constant usage](https://github.com/W00D00/home-assistant-elero/pull/45).
+- **3.3** (2023-05-12): [Remote transmitter via ser2net](https://github.com/W00D00/home-assistant-elero/pull/40), [fix for HA 2023.5](https://github.com/W00D00/home-assistant-elero/pull/43).
+- **3.2.2** (2022-11-17): [Unique IDs](https://github.com/W00D00/home-assistant-elero/pull/38).
+- **3.2.1** (2022-03-10): [Fix TypeError on HA shutdown](https://github.com/W00D00/home-assistant-elero/pull/36).
+- **3.2.0** (2022-03-10): [HACS support](https://github.com/W00D00/home-assistant-elero/issues/23).
+- **3.1.0** (2022-03-05): [Update dependencies for pip 20.3](https://github.com/W00D00/home-assistant-elero/issues/29).
+- **3.0.0** (2021-04-23): [Version in manifest.json](https://github.com/W00D00/home-assistant-elero/commit/d6bce117bc26c9b4cf54b649060e8ea3a8538816).
+- **3.0** (2020-01-19): [Apply HA style guidelines](https://github.com/W00D00/home-assistant-elero/commit/e50debc234091f9b16261e9f20e9d90c9604f308).
+- **2.92** (2020-01-05): [Refactor serial read/write to fix group problems](https://github.com/W00D00/home-assistant-elero/issues/11).
+- **2.9 – 2.91** (2019-12-30 – 2020-01-02): [Serial read/write improvements](https://github.com/W00D00/home-assistant-elero/issues/11).
+- **2.8** (2019-12-24): [Serial timeouts; Elero states exposed in HA](https://github.com/W00D00/home-assistant-elero/issues/11).
+- **2.7** (2019-12-13): [Fix intermediate/ventilation command–status mismatch](https://github.com/W00D00/home-assistant-elero/issues/10).
+- **2.6** (2019-12-08): [Fix intermediate/ventilation mix-up; position slider with all Elero commands](https://github.com/W00D00/home-assistant-elero/issues/10).
+- **2.5** (2019-12-05): [Response and position slider handling](https://github.com/W00D00/home-assistant-elero/issues/8).
+- **2.4** (2019-11-16): Usable position slider, [response handling improvements](https://github.com/W00D00/home-assistant-elero/issues/8).
+- **2.3** (2019-07-15): `no response` handling fix.
+- **2.2** (2019-06-27): New `no response` handling.
+- **2.1** (2019-06-26): [Store Elero channels in the transmitter object](https://github.com/W00D00/home-assistant-elero/issues/6).
+- **2.0** (2019-06-21): [Automatic USB discovery](https://github.com/W00D00/home-assistant-elero/issues/4).
+- **1.0 – 1.6** (2018-06 – 2019-03): Initial release, device states, intermediate and ventilation positions.
+
+---
+
+## Contributing
+
+Bug reports and feature requests: [GitHub Issues](https://github.com/valentingc/home-assistant-elero/issues).
+
+- Small fixes and documentation: open a pull request directly.
+- Larger changes (new features, rewrites): open an issue first to discuss them.
+- Run the [test suite](#development) before submitting, and add tests for new behaviour.
+- Keep each pull request to one focused change, and squash "oops"/"fix typo" commits.
+
+Originally created by [W00D00](https://github.com/W00D00/home-assistant-elero).
