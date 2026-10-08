@@ -326,7 +326,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _auto_import_yaml_covers(hass, entry, transmitter.get_serial_number())
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Adding, reconfiguring or removing a cover sub-entry only fires update
+    # listeners; reload so the change takes effect without a restart.
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     return True
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 def _auto_import_yaml_covers(

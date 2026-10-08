@@ -5,7 +5,9 @@ from __future__ import annotations
 __version__ = "4.1.1"
 
 import logging
+import threading
 import time
+from functools import partial
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
@@ -19,11 +21,12 @@ from homeassistant.components.cover import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_COVERS, CONF_DEVICE_CLASS, CONF_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util.async_ import run_callback_threadsafe
 
 from . import _legacy_lookup_transmitter
 from .const import (
@@ -233,6 +236,13 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     _attr_should_poll = True
 
+    async def async_will_remove_from_hass(self):
+        """Drop pending timers so they don't fire on a removed entity."""
+        self._cancel_scheduled_stop()
+        if self._scheduled_poll is not None:
+            self._scheduled_poll.cancel()
+            self._scheduled_poll = None
+
     async def async_added_to_hass(self):
         """Restore state on HA startup."""
         await super().async_added_to_hass()
@@ -312,6 +322,8 @@ class EleroCover(CoverEntity, RestoreEntity):
 
         # Handle for a scheduled stop (used by set_cover_position)
         self._scheduled_stop = None
+        # Handle for the status poll scheduled after a full open/close run
+        self._scheduled_poll = None
 
         # After a manual tilt-step, ignore the device's "tilt ventilation"
         # stop response until this timestamp.
@@ -379,10 +391,45 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     # ── movement helpers ────────────────────────────────────────────────
 
+    def _in_loop_thread(self) -> bool:
+        return threading.get_ident() == self.hass.loop_thread_id
+
+    def _call_later(self, delay, func):
+        """Schedule `func` on the event loop after `delay` seconds.
+
+        Cover commands run in the executor (this is a sync entity), where
+        `loop.call_later` is not thread-safe, so hop onto the loop first.
+        """
+        if self._in_loop_thread():
+            return self.hass.loop.call_later(delay, func)
+        return run_callback_threadsafe(
+            self.hass.loop, self.hass.loop.call_later, delay, func
+        ).result()
+
+    @callback
+    def _async_poll(self):
+        """Poll the device in the executor and write the resulting state."""
+        self._scheduled_poll = None
+        self.async_schedule_update_ha_state(True)
+
+    def _cancel(self, handle):
+        if self._in_loop_thread():
+            handle.cancel()
+        else:
+            self.hass.loop.call_soon_threadsafe(handle.cancel)
+
     def _cancel_scheduled_stop(self):
         if self._scheduled_stop is not None:
-            self._scheduled_stop.cancel()
+            self._cancel(self._scheduled_stop)
             self._scheduled_stop = None
+
+    def _schedule_poll(self):
+        """Poll the drive once it should have finished a full run."""
+        if self._scheduled_poll is not None:
+            self._cancel(self._scheduled_poll)
+        self._scheduled_poll = self._call_later(
+            self._travel_time + 1, self._async_poll
+        )
 
     def _start_moving(self, direction):
         """Begin tracking a movement.  direction: +1 (open) or -1 (close)."""
@@ -442,12 +489,12 @@ class EleroCover(CoverEntity, RestoreEntity):
     def open_cover(self, **kwargs):
         self._transmitter.up(self._channel)
         self._start_moving(+1)
-        self.hass.loop.call_later(self._travel_time + 1, self.update)
+        self._schedule_poll()
 
     def close_cover(self, **kwargs):
         self._transmitter.down(self._channel)
         self._start_moving(-1)
-        self.hass.loop.call_later(self._travel_time + 1, self.update)
+        self._schedule_poll()
 
     def stop_cover(self, **kwargs):
         self._transmitter.stop(self._channel)
@@ -466,9 +513,11 @@ class EleroCover(CoverEntity, RestoreEntity):
                 "%s: position unknown — opening fully to calibrate", self._attr_name
             )
             self.open_cover()
-            self._scheduled_stop = self.hass.loop.call_later(
+            self._scheduled_stop = self._call_later(
                 self._travel_time + 2,
-                lambda: self.set_cover_position(position=target),
+                lambda: self.hass.async_add_executor_job(
+                    partial(self.set_cover_position, position=target)
+                ),
             )
             return
 
@@ -493,7 +542,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             )
             self.hass.async_add_executor_job(self._execute_timed_stop, target)
 
-        self._scheduled_stop = self.hass.loop.call_later(move_time, _finish_move)
+        self._scheduled_stop = self._call_later(move_time, _finish_move)
 
     def _execute_timed_stop(self, target):
         self._transmitter.stop(self._channel)
@@ -598,7 +647,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             )
             self.hass.async_add_executor_job(self._execute_timed_tilt_stop, target)
 
-        self._scheduled_stop = self.hass.loop.call_later(move_time, _finish_tilt)
+        self._scheduled_stop = self._call_later(move_time, _finish_tilt)
 
     def _execute_timed_tilt_stop(self, target):
         self._transmitter.stop(self._channel)
