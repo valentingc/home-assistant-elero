@@ -25,7 +25,8 @@
             }
         },
         "error": {
-            "invalid_input": "Please fill in all fields."
+            "invalid_input": "Please fill in all fields.",
+            "cannot_connect": "Could not reach the transmitter stick at this address."
         },
         "abort": {
             "already_configured": "This transmitter is already configured.",
@@ -44,26 +45,129 @@
                     "description": "Configure an Elero-controlled cover (blind, shutter, awning, …).",
                     "data": {
                         "name": "Name",
-                        "channel": "Channel (1-15)",
+                        "channel": "Channel",
                         "device_class": "Device class",
                         "supported_features": "Supported features",
-                        "travel_time": "Travel time (seconds for full open↔close)",
-                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)",
-                        "tilt_travel_time": "Tilt travel time (seconds for full slat open↔close, 0 = disable timed tilt slider)"
+                        "tilt_buttons": "Open/close tilt buttons"
+                    },
+                    "data_description": {
+                        "channel": "Channel (1–15) the drive is taught-in to on the stick. Only free taught-in channels are listed when the stick is connected.",
+                        "tilt_buttons": "What HA's open/close tilt controls do."
+                    },
+                    "sections": {
+                        "timing": {
+                            "name": "Timing",
+                            "description": "Stopwatch times of the drive.",
+                            "data": {
+                                "travel_time_up": "Travel time up",
+                                "travel_time_down": "Travel time down",
+                                "tilt_travel_time": "Slat travel time",
+                                "learn_travel_times": "Learn travel times"
+                            },
+                            "data_description": {
+                                "travel_time_up": "Seconds for a full run from closed to open.",
+                                "travel_time_down": "Seconds for a full run from open to closed.",
+                                "tilt_travel_time": "Seconds for the slats to swing fully closed ↔ open before the blind starts to travel. 0 for covers without slats.",
+                                "learn_travel_times": "Refine the travel times from full runs between the end stops."
+                            }
+                        },
+                        "ventilation": {
+                            "name": "Ventilation command (close tilt)",
+                            "description": "Elero ventilation / tilting position.",
+                            "data": {
+                                "mode": "What the command does",
+                                "position": "Fixed position",
+                                "duration": "Step duration"
+                            },
+                            "data_description": {
+                                "mode": "How the drive is programmed for this command.",
+                                "position": "Where the drive stops, for 'Fixed position'.",
+                                "duration": "How long the drive runs, for 'Short move up/down'."
+                            }
+                        },
+                        "intermediate": {
+                            "name": "Intermediate command (open tilt)",
+                            "description": "Elero intermediate position.",
+                            "data": {
+                                "mode": "What the command does",
+                                "position": "Fixed position",
+                                "duration": "Step duration"
+                            },
+                            "data_description": {
+                                "mode": "How the drive is programmed for this command.",
+                                "position": "Where the drive stops, for 'Fixed position'.",
+                                "duration": "How long the drive runs, for 'Short move up/down'."
+                            }
+                        }
                     }
                 },
                 "reconfigure": {
                     "title": "Reconfigure cover",
+                    "description": "Change the settings of this cover.",
                     "data": {
                         "name": "Name",
-                        "channel": "Channel (1-15)",
+                        "channel": "Channel",
                         "device_class": "Device class",
                         "supported_features": "Supported features",
-                        "travel_time": "Travel time (seconds for full open↔close)",
-                        "tilt_step": "Tilt step (% per close-tilt press, 0 = disabled)",
-                        "tilt_travel_time": "Tilt travel time (seconds for full slat open↔close, 0 = disable timed tilt slider)"
+                        "tilt_buttons": "Open/close tilt buttons"
+                    },
+                    "data_description": {
+                        "channel": "Channel (1–15) the drive is taught-in to on the stick. Only free taught-in channels are listed when the stick is connected.",
+                        "tilt_buttons": "What HA's open/close tilt controls do."
+                    },
+                    "sections": {
+                        "timing": {
+                            "name": "Timing",
+                            "description": "Stopwatch times of the drive.",
+                            "data": {
+                                "travel_time_up": "Travel time up",
+                                "travel_time_down": "Travel time down",
+                                "tilt_travel_time": "Slat travel time",
+                                "learn_travel_times": "Learn travel times"
+                            },
+                            "data_description": {
+                                "travel_time_up": "Seconds for a full run from closed to open.",
+                                "travel_time_down": "Seconds for a full run from open to closed.",
+                                "tilt_travel_time": "Seconds for the slats to swing fully closed ↔ open before the blind starts to travel. 0 for covers without slats.",
+                                "learn_travel_times": "Refine the travel times from full runs between the end stops."
+                            }
+                        },
+                        "ventilation": {
+                            "name": "Ventilation command (close tilt)",
+                            "description": "Elero ventilation / tilting position.",
+                            "data": {
+                                "mode": "What the command does",
+                                "position": "Fixed position",
+                                "duration": "Step duration"
+                            },
+                            "data_description": {
+                                "mode": "How the drive is programmed for this command.",
+                                "position": "Where the drive stops, for 'Fixed position'.",
+                                "duration": "How long the drive runs, for 'Short move up/down'."
+                            }
+                        },
+                        "intermediate": {
+                            "name": "Intermediate command (open tilt)",
+                            "description": "Elero intermediate position.",
+                            "data": {
+                                "mode": "What the command does",
+                                "position": "Fixed position",
+                                "duration": "Step duration"
+                            },
+                            "data_description": {
+                                "mode": "How the drive is programmed for this command.",
+                                "position": "Where the drive stops, for 'Fixed position'.",
+                                "duration": "How long the drive runs, for 'Short move up/down'."
+                            }
+                        }
                     }
                 }
+            },
+            "error": {
+                "channel_in_use": "Another cover already uses this channel."
+            },
+            "abort": {
+                "reconfigure_successful": "The cover was reconfigured."
             }
         }
     },
@@ -71,6 +175,31 @@
         "deprecated_yaml": {
             "title": "Elero YAML configuration is deprecated",
             "description": "Configuration of Elero via configuration.yaml has been imported into a config entry. Remove the YAML block when you have verified the integration is set up correctly under Settings → Devices & services."
+        }
+    },
+    "selector": {
+        "preset_mode": {
+            "options": {
+                "fixed": "Fixed position",
+                "step_up": "Short move up",
+                "step_down": "Short move down"
+            }
+        },
+        "tilt_buttons": {
+            "options": {
+                "presets": "Elero commands (open tilt = intermediate, close tilt = ventilation)",
+                "slats": "Rotate the slats fully open / closed"
+            }
+        }
+    },
+    "entity": {
+        "button": {
+            "ventilation": {
+                "name": "Ventilation"
+            },
+            "intermediate": {
+                "name": "Intermediate"
+            }
         }
     }
 }

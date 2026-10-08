@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-__version__ = "4.1.1"
+__version__ = "4.2.0"
 
 import logging
-import threading
 import time
-from functools import partial
+from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 import homeassistant.helpers.config_validation as cv
@@ -19,16 +19,18 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
     PLATFORM_SCHEMA as COVER_PLATFORM_SCHEMA,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_COVERS, CONF_DEVICE_CLASS, CONF_NAME
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util.async_ import run_callback_threadsafe
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.restore_state import (
+    ExtraStoredData,
+    RestoredExtraData,
+    RestoreEntity,
+)
 
-from . import _legacy_lookup_transmitter
 from .const import (
     CONF_CHANNEL,
     CONF_SUPPORTED_FEATURES,
@@ -42,27 +44,38 @@ from .const import (
     DOMAIN,
     ELERO_COVER_DEVICE_CLASSES,
     INFO_BLOCKING,
-    INFO_BOTTOM_POSITION_STOP,
     INFO_BOTTOM_POS_STOP_WICH_INT_POS,
+    INFO_BOTTOM_POSITION_STOP,
     INFO_INTERMEDIATE_POSITION_STOP,
     INFO_MOVING_DOWN,
     INFO_MOVING_UP,
-    INFO_NO_INFORMATION,
     INFO_OVERHEATED,
     INFO_START_TO_MOVE_DOWN,
     INFO_START_TO_MOVE_UP,
     INFO_STOPPED_IN_UNDEFINED_POSITION,
-    INFO_SWITCHING_DEVICE_SWITCHED_OFF,
-    INFO_SWITCHING_DEVICE_SWITCHED_ON,
     INFO_TILT_VENTILATION_POS_STOP,
     INFO_TIMEOUT,
-    INFO_TOP_POSITION_STOP,
     INFO_TOP_POS_STOP_WICH_TILT_POS,
-    POSITION_CLOSED,
-    POSITION_INTERMEDIATE,
-    POSITION_OPEN,
-    POSITION_TILT_VENTILATION,
+    INFO_TOP_POSITION_STOP,
+    POLL_INTERVAL_ENDGAME,
+    POLL_INTERVAL_IDLE,
+    POLL_INTERVAL_MOVING,
+    PRESET_FIXED,
     SUBENTRY_TYPE_COVER,
+    TILT_BUTTONS_SLATS,
+)
+from .hub import EleroHub
+from .model import (
+    CLOSED,
+    DOWN,
+    OPEN,
+    UP,
+    CoverOptions,
+    CoverState,
+    PresetOptions,
+    advance,
+    time_to_position,
+    time_to_tilt,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,7 +93,40 @@ SUPPORTED_FEATURES = {
     "up": CoverEntityFeature.OPEN,
 }
 
-# ── Legacy YAML schema (still accepted, but new users should use the UI) ──
+STATUSES_UP = (INFO_START_TO_MOVE_UP, INFO_MOVING_UP)
+STATUSES_DOWN = (INFO_START_TO_MOVE_DOWN, INFO_MOVING_DOWN)
+STATUSES_VENTILATION = (INFO_TILT_VENTILATION_POS_STOP, INFO_TOP_POS_STOP_WICH_TILT_POS)
+STATUSES_INTERMEDIATE = (
+    INFO_INTERMEDIATE_POSITION_STOP,
+    INFO_BOTTOM_POS_STOP_WICH_INT_POS,
+)
+STATUSES_FAULT = (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT)
+
+# Moves shorter than this are not worth sending.
+MIN_MOVE_SECONDS = 0.3
+# Movement reports this long after a self-terminating preset step are stale.
+PRESET_GRACE = 3.0
+# Give up waiting for an end stop this long after the expected end of a run.
+END_STOP_GRACE = 10.0
+# Poll once more this long after a move ends, to confirm the drive's status.
+CONFIRM_POLL_DELAY = 1.5
+# How often the UI is refreshed while a cover is moving.
+UI_TICK = 1.0
+# Learned travel times move this far towards each new measurement.
+LEARN_RATE = 0.3
+# Measurements further off than this are ignored as outliers.
+LEARN_TOLERANCE = (0.6, 1.5)
+# Only learn if the end stop was bracketed by polls at most this far apart.
+LEARN_MAX_BRACKET = 3.0
+
+# Move kinds
+MOVE_RUN = "run"  # open/close to an end stop
+MOVE_TIMED = "timed"  # we send STOP after `duration`
+MOVE_PRESET = "preset"  # the drive stops itself after `duration`
+MOVE_EXTERNAL = "external"  # started outside HA (physical remote), end unknown
+
+
+# ── Legacy YAML schema (still accepted, auto-imported as sub-entries) ────
 
 ELERO_COVER_DEVICE_CLASSES_SCHEMA = vol.All(
     vol.Lower, vol.In(ELERO_COVER_DEVICE_CLASSES)
@@ -108,683 +154,594 @@ PLATFORM_SCHEMA = COVER_PLATFORM_SCHEMA.extend(
 )
 
 
-# ── Setup hooks ─────────────────────────────────────────────────────────
+def setup_platform(hass, config, add_entities, discovery_info=None):
+    """Legacy `cover: - platform: elero` YAML.
 
-
-def setup_platform(hass, config, add_devices, discovery_info=None):
-    """Set up the Elero cover platform from legacy YAML.
-
-    Skips covers that have already been auto-imported as a sub-entry of the
-    matching ConfigEntry — the modern (subentry) path takes precedence.
+    These covers are imported as sub-entries of their transmitter when it is
+    set up (see `_auto_import_yaml_covers`), so nothing is created here.
     """
-    covers = []
-    covers_conf = config.get(CONF_COVERS, {})
-    for _, cover_conf in covers_conf.items():
-        serial = cover_conf.get(CONF_TRANSMITTER_SERIAL_NUMBER)
-        channel = cover_conf.get(CONF_CHANNEL)
-        if _has_subentry_for_channel(hass, serial, channel):
-            _LOGGER.debug(
-                "Skipping legacy YAML cover '%s' ch %s — already a sub-entry",
-                cover_conf.get(CONF_NAME),
-                channel,
-            )
-            continue
-
-        transmitter = _legacy_lookup_transmitter(hass, serial)
-        if not transmitter:
-            _LOGGER.error(
-                "The transmitter '%s' of channel '%s' - '%s' is non-existent!",
-                serial,
-                channel,
-                cover_conf.get(CONF_NAME),
-            )
-            continue
-        covers.append(
-            EleroCover(
-                hass=hass,
-                transmitter=transmitter,
-                name=cover_conf[CONF_NAME],
-                channel=channel,
-                device_class=cover_conf[CONF_DEVICE_CLASS],
-                supported_features=cover_conf[CONF_SUPPORTED_FEATURES],
-                travel_time=cover_conf[CONF_TRAVEL_TIME],
-                tilt_step=cover_conf.get(CONF_TILT_STEP, DEFAULT_TILT_STEP),
-                tilt_travel_time=cover_conf.get(
-                    CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME
-                ),
-                unique_suffix=str(channel),
-            )
-        )
-    add_devices(covers, True)
+    _LOGGER.warning(
+        "Elero covers in configuration.yaml are imported into the UI "
+        "automatically; remove the `platform: elero` cover configuration"
+    )
 
 
-def _has_subentry_for_channel(hass, serial_number, channel) -> bool:
-    """Return True if any ConfigEntry already has a cover subentry for this channel."""
-    if not serial_number or channel is None:
-        return False
-    try:
-        ch = int(channel)
-    except (TypeError, ValueError):
-        return False
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.data.get(CONF_TRANSMITTER_SERIAL_NUMBER) != serial_number:
-            continue
-        for sub in entry.subentries.values():
-            if (
-                sub.subentry_type == SUBENTRY_TYPE_COVER
-                and int(sub.data.get(CONF_CHANNEL, -1)) == ch
-            ):
-                return True
-    return False
+# ── Config entry setup ──────────────────────────────────────────────────
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Elero covers from sub-entries of a config entry."""
-    transmitter = hass.data[DOMAIN][entry.entry_id]
-    serial = transmitter.get_serial_number()
-    hub_device = dr.async_get(hass).async_get_device_by_identifier(
-        (DOMAIN, serial), entry.entry_id
-    )
-    hub_device_id = hub_device.id if hub_device else None
-
-    by_subentry: dict[str, list[EleroCover]] = {}
+    """Set up Elero covers from the cover sub-entries of a config entry."""
+    hub: EleroHub = entry.runtime_data
     for subentry_id, subentry in entry.subentries.items():
         if subentry.subentry_type != SUBENTRY_TYPE_COVER:
             continue
-        cover = EleroCover(
-            hass=hass,
-            transmitter=transmitter,
-            name=subentry.data[CONF_NAME],
-            channel=int(subentry.data[CONF_CHANNEL]),
-            device_class=subentry.data[CONF_DEVICE_CLASS],
-            supported_features=subentry.data[CONF_SUPPORTED_FEATURES],
-            travel_time=float(
-                subentry.data.get(CONF_TRAVEL_TIME, DEFAULT_TRAVEL_TIME)
-            ),
-            tilt_step=float(subentry.data.get(CONF_TILT_STEP, DEFAULT_TILT_STEP)),
-            tilt_travel_time=float(
-                subentry.data.get(
-                    CONF_TILT_TRAVEL_TIME, DEFAULT_TILT_TRAVEL_TIME
-                )
-            ),
-            unique_suffix=str(int(subentry.data[CONF_CHANNEL])),
-            hub_serial=serial,
-            hub_device_id=hub_device_id,
-        )
-        by_subentry.setdefault(subentry_id, []).append(cover)
+        cover = EleroCover(hub, subentry)
+        hub.covers[subentry_id] = cover
+        async_add_entities([cover], config_subentry_id=subentry_id)
 
-    for subentry_id, entities in by_subentry.items():
-        async_add_entities(entities, True, config_subentry_id=subentry_id)
+
+def cover_device_info(hub: EleroHub, subentry: ConfigSubentry) -> DeviceInfo:
+    channel = int(subentry.data[CONF_CHANNEL])
+    info = DeviceInfo(
+        identifiers={(DOMAIN, f"{hub.serial_number}_{channel}")},
+        name=subentry.title,
+        manufacturer="Elero",
+        model=subentry.data[CONF_DEVICE_CLASS],
+    )
+    if hub.hub_device_id:
+        info["via_device_id"] = hub.hub_device_id
+    return info
 
 
 # ── Entity ──────────────────────────────────────────────────────────────
 
 
-class EleroCover(CoverEntity, RestoreEntity):
-    """Representation of an Elero cover device.
+@dataclass
+class _Move:
+    direction: int
+    kind: str
+    started: float  # time.monotonic()
+    started_wall: float  # time.time(), survives restarts
+    start: CoverState
+    duration: float | None = None  # known run time (timed / preset moves)
+    preset: PresetOptions | None = None
+    learn: bool = False  # full run from one end stop, usable for learning
+    last_moving_seen: float | None = None
+    timers: list[CALLBACK_TYPE] = field(default_factory=list)
 
-    Position tracking uses time-based interpolation: when the cover is moving,
-    the current position is calculated from the start position, direction,
-    elapsed time, and configured travel_time. Known stop events from the radio
-    (top / bottom / intermediate / tilt) override the estimate with the exact
-    position.
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "direction": self.direction,
+            "kind": self.kind,
+            "started_wall": self.started_wall,
+            "position": self.start.position,
+            "tilt": self.start.tilt,
+            "duration": self.duration,
+        }
+
+
+class EleroCover(CoverEntity, RestoreEntity):
+    """An Elero drive on one channel of a transmitter stick.
+
+    Position and tilt are estimated with the motion model in `model.py` while
+    the drive moves, and corrected whenever the drive reports an end stop or
+    a fixed preset position. The precise estimate, any move in progress and
+    learned travel times are stored with the entity and survive restarts.
     """
 
-    _attr_should_poll = True
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_name = None
 
-    async def async_will_remove_from_hass(self):
-        """Drop pending timers so they don't fire on a removed entity."""
-        self._cancel_scheduled_stop()
-        if self._scheduled_poll is not None:
-            self._scheduled_poll.cancel()
-            self._scheduled_poll = None
+    def __init__(self, hub: EleroHub, subentry: ConfigSubentry) -> None:
+        self._hub = hub
+        self._opts = CoverOptions.from_data(subentry.data)
+        self._timing = self._opts
+        self._channel = self._opts.channel
 
-    async def async_added_to_hass(self):
-        """Restore state on HA startup."""
-        await super().async_added_to_hass()
-        state = await self.async_get_last_state()
-        if not state:
-            return
-        self._position = state.attributes.get("current_position")
-        self._tilt_position = state.attributes.get("current_tilt_position")
-        self._elero_state = state.attributes.get(ATTR_ELERO_STATE)
-        if self._position is not None:
-            self._closed = self._position == 0
-        _LOGGER.debug(
-            "Restored state for %s: position=%s", self._attr_name, self._position
-        )
-
-    def __init__(
-        self,
-        *,
-        hass: HomeAssistant,
-        transmitter,
-        name: str,
-        channel: int,
-        device_class: str,
-        supported_features: list[str],
-        travel_time: float,
-        tilt_step: float = DEFAULT_TILT_STEP,
-        tilt_travel_time: float = DEFAULT_TILT_TRAVEL_TIME,
-        unique_suffix: str | None = None,
-        hub_serial: str | None = None,
-        hub_device_id: str | None = None,
-    ):
-        self.hass = hass
-        self._transmitter = transmitter
-        self._channel = channel
-        self._tilt_step = tilt_step
-        self._tilt_travel_time = tilt_travel_time
-
-        serial = hub_serial or transmitter.get_serial_number()
-        suffix = unique_suffix or str(channel)
-        self._attr_name = name
-        self._attr_unique_id = f"{serial}_{suffix}"
-        self._attr_device_class = ELERO_COVER_DEVICE_CLASSES[device_class]
-
-        feature_mask = 0
-        for f in supported_features:
-            feature_mask |= SUPPORTED_FEATURES[f]
+        self._attr_unique_id = f"{hub.serial_number}_{self._channel}"
+        self._attr_device_class = ELERO_COVER_DEVICE_CLASSES[
+            subentry.data[CONF_DEVICE_CLASS]
+        ]
+        self._attr_device_info = cover_device_info(hub, subentry)
+        feature_mask = CoverEntityFeature(0)
+        for name in self._opts.features:
+            feature_mask |= SUPPORTED_FEATURES[name]
         self._attr_supported_features = feature_mask
 
-        # Each cover is its own device under the transmitter hub.
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{serial}_{channel}")},
-            name=name,
-            manufacturer="Elero",
-            model=device_class,
-        )
-        if hub_device_id:
-            self._attr_device_info["via_device_id"] = hub_device_id
-
-        self._available = self._transmitter.set_channel(
-            self._channel, self.response_handler
-        )
-
-        # Core state
-        self._position: int | None = None  # 0 = closed, 100 = open
-        self._tilt_position: int | None = None
-        self._is_opening = False
-        self._is_closing = False
-        self._closed: bool | None = None
+        self._state = CoverState()
+        self._move: _Move | None = None
         self._elero_state: str | None = None
-        self._response: dict = {}
+        self._pending_target: float | None = None
+        self._ignore_movement_until = 0.0
+        self._learned: dict[str, float] = {}
+        self._available = False
+        self._ui_tick: CALLBACK_TYPE | None = None
+        self._confirm_poll: CALLBACK_TYPE | None = None
 
-        # Travel-time position tracking
-        self._travel_time = travel_time
-        self._move_start_time: float | None = None
-        self._move_start_position: int | None = None
-        self._move_direction = 0
+    # ── lifecycle and persistence ───────────────────────────────────────
 
-        # Handle for a scheduled stop (used by set_cover_position)
-        self._scheduled_stop = None
-        # Handle for the status poll scheduled after a full open/close run
-        self._scheduled_poll = None
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._async_restore()
 
-        # After a manual tilt-step, ignore the device's "tilt ventilation"
-        # stop response until this timestamp.
-        self._tilt_step_lock_until = 0.0
+        self._available = self._hub.async_register(self._channel, self._async_on_status)
+        self.async_on_remove(lambda: self._hub.async_unregister(self._channel))
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass,
+                self._async_idle_poll,
+                timedelta(seconds=POLL_INTERVAL_IDLE),
+            )
+        )
+        self.async_on_remove(self._cancel_all_timers)
+        self._hub.async_request_poll(self._channel)
 
-        # While a timed-tilt move is in flight (and briefly after), preserve
-        # the user's tilt target across stale "moving"/"undefined stop"
-        # responses that would otherwise wipe _tilt_position.
-        self._timed_tilt_target: int | None = None
-        self._timed_tilt_lock_until = 0.0
+    async def _async_restore(self) -> None:
+        if (state := await self.async_get_last_state()) is not None:
+            # Rounded values, used if no precise data was stored (pre-4.2).
+            position = state.attributes.get("current_position")
+            tilt = state.attributes.get("current_tilt_position")
+            self._state = CoverState(
+                None if position is None else float(position),
+                None if tilt is None else float(tilt),
+            )
+            self._elero_state = state.attributes.get(ATTR_ELERO_STATE)
 
-    # ── HA entity properties ────────────────────────────────────────────
+        extra = await self.async_get_last_extra_data()
+        if extra is None:
+            return
+        data = extra.as_dict()
+        self._learned = {
+            k: float(v) for k, v in (data.get("learned") or {}).items() if v is not None
+        }
+        self._apply_learned()
+        if "position" in data or "tilt" in data:
+            self._state = CoverState(data.get("position"), data.get("tilt"))
+        if move := data.get("move"):
+            self._restore_move(move)
+
+    def _restore_move(self, move: dict[str, Any]) -> None:
+        """Account for a move that was running when Home Assistant stopped."""
+        direction = int(move["direction"])
+        start = CoverState(move.get("position"), move.get("tilt"))
+        elapsed = max(0.0, time.time() - float(move["started_wall"]))
+        duration = move.get("duration")
+        if duration is not None:
+            # Timed moves were stopped by us, or not at all if HA went down
+            # first; either way the estimate at `duration` is the best guess.
+            elapsed = min(elapsed, float(duration))
+        elif move["kind"] in (MOVE_RUN, MOVE_EXTERNAL) and start.position is not None:
+            if elapsed >= self._expected_run_time(start, direction):
+                self._state = self._end_stop_state(direction, start)
+                return
+        self._state = advance(start, direction, elapsed, self._timing)
+        _LOGGER.debug("%s: restored interrupted move, now %s", self.entity_id, self._state)
 
     @property
-    def available(self):
+    def extra_restore_state_data(self) -> ExtraStoredData:
+        state = self._current()
+        return RestoredExtraData(
+            {
+                "position": state.position,
+                "tilt": state.tilt,
+                "learned": dict(self._learned),
+                "move": None if self._move is None else self._move.as_dict(),
+            }
+        )
+
+    def _apply_learned(self) -> None:
+        if not self._opts.learn_travel_times:
+            self._timing = self._opts
+            return
+        self._timing = self._opts.with_travel_times(
+            self._learned.get("travel_time_up", self._opts.travel_up),
+            self._learned.get("travel_time_down", self._opts.travel_down),
+        )
+
+    # ── state ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic()
+
+    def _current(self) -> CoverState:
+        move = self._move
+        if move is None:
+            return self._state
+        elapsed = self._now() - move.started
+        if move.duration is not None:
+            elapsed = min(elapsed, move.duration)
+        return advance(move.start, move.direction, elapsed, self._timing)
+
+    @property
+    def available(self) -> bool:
         return self._available
 
     @property
-    def current_cover_position(self):
-        """Return current position, interpolating in real-time while moving."""
-        if (
-            self._move_start_time is not None
-            and self._move_start_position is not None
-        ):
-            elapsed = time.time() - self._move_start_time
-            delta = (elapsed / self._travel_time) * 100.0 * self._move_direction
-            return max(0, min(100, round(self._move_start_position + delta)))
-        return self._position
+    def current_cover_position(self) -> int | None:
+        position = self._current().position
+        return None if position is None else round(position)
 
     @property
-    def current_cover_tilt_position(self):
-        return self._tilt_position
+    def current_cover_tilt_position(self) -> int | None:
+        tilt = self._current().tilt
+        return None if tilt is None else round(tilt)
 
     @property
-    def is_opening(self):
-        return self._is_opening
+    def is_opening(self) -> bool:
+        return self._move is not None and self._move.direction == UP
 
     @property
-    def is_closing(self):
-        return self._is_closing
+    def is_closing(self) -> bool:
+        return self._move is not None and self._move.direction == DOWN
 
     @property
-    def is_closed(self):
-        return self._closed
+    def is_closed(self) -> bool | None:
+        position = self.current_cover_position
+        return None if position is None else position == 0
 
     @property
-    def extra_state_attributes(self):
-        data: dict[str, Any] = {}
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "channel": self._channel,
+            "travel_time_up": round(self._timing.travel_up, 1),
+            "travel_time_down": round(self._timing.travel_down, 1),
+        }
         if self._elero_state is not None:
             data[ATTR_ELERO_STATE] = self._elero_state
-        data["channel"] = self._channel
-        data["travel_time"] = self._travel_time
-        data["tilt_step"] = self._tilt_step
-        data["tilt_travel_time"] = self._tilt_travel_time
-        data["move_start_position"] = self._move_start_position
-        tx = self._transmitter
-        data["last_command_ts"] = tx.last_command_ts
-        data["last_response_ts"] = tx.last_response_ts
-        data["error_count"] = tx.error_count
-        data["timeout_count"] = tx.timeout_count
-        data["reconnect_count"] = tx.reconnect_count
-        data["checksum_error_count"] = tx.checksum_error_count
-        data["consecutive_failures"] = tx.consecutive_failures
         return data
 
-    # ── movement helpers ────────────────────────────────────────────────
+    # ── movement tracking ───────────────────────────────────────────────
 
-    def _in_loop_thread(self) -> bool:
-        return threading.get_ident() == self.hass.loop_thread_id
+    def _cancel_move_timers(self) -> None:
+        if self._move is not None:
+            for cancel in self._move.timers:
+                cancel()
+            self._move.timers.clear()
+        if self._ui_tick is not None:
+            self._ui_tick()
+            self._ui_tick = None
 
-    def _call_later(self, delay, func):
-        """Schedule `func` on the event loop after `delay` seconds.
+    def _cancel_all_timers(self) -> None:
+        self._cancel_move_timers()
+        if self._confirm_poll is not None:
+            self._confirm_poll()
+            self._confirm_poll = None
 
-        Cover commands run in the executor (this is a sync entity), where
-        `loop.call_later` is not thread-safe, so hop onto the loop first.
-        """
-        if self._in_loop_thread():
-            return self.hass.loop.call_later(delay, func)
-        return run_callback_threadsafe(
-            self.hass.loop, self.hass.loop.call_later, delay, func
-        ).result()
+    def _later(self, delay: float, action) -> None:
+        """Schedule `action()` for the current move; cancelled when it ends."""
+        assert self._move is not None
+        self._move.timers.append(
+            async_call_later(self.hass, max(0.0, delay), callback(lambda _now: action()))
+        )
 
     @callback
-    def _async_poll(self):
-        """Poll the device in the executor and write the resulting state."""
-        self._scheduled_poll = None
-        self.async_schedule_update_ha_state(True)
-
-    def _cancel(self, handle):
-        if self._in_loop_thread():
-            handle.cancel()
-        else:
-            self.hass.loop.call_soon_threadsafe(handle.cancel)
-
-    def _cancel_scheduled_stop(self):
-        if self._scheduled_stop is not None:
-            self._cancel(self._scheduled_stop)
-            self._scheduled_stop = None
-
-    def _schedule_poll(self):
-        """Poll the drive once it should have finished a full run."""
-        if self._scheduled_poll is not None:
-            self._cancel(self._scheduled_poll)
-        self._scheduled_poll = self._call_later(
-            self._travel_time + 1, self._async_poll
+    def _begin_move(
+        self,
+        direction: int,
+        kind: str,
+        *,
+        duration: float | None = None,
+        preset: PresetOptions | None = None,
+    ) -> None:
+        # Freeze the estimate of any running move without reporting it stopped.
+        start = self._current()
+        self._cancel_move_timers()
+        self._state = start
+        self._move = _Move(
+            direction=direction,
+            kind=kind,
+            started=self._now(),
+            started_wall=time.time(),
+            start=start,
+            duration=duration,
+            preset=preset,
+            learn=(
+                kind == MOVE_RUN
+                and start.position == (CLOSED if direction == UP else OPEN)
+            ),
         )
-
-    def _start_moving(self, direction):
-        """Begin tracking a movement.  direction: +1 (open) or -1 (close)."""
-        self._cancel_scheduled_stop()
-        current = self.current_cover_position
-        self._move_start_time = time.time()
-        self._move_start_position = (
-            current if current is not None else (0 if direction > 0 else 100)
+        if duration is not None:
+            self._later(duration, self._async_on_move_duration_elapsed)
+        if kind == MOVE_RUN:
+            # Poll from shortly before the drive should reach its end stop.
+            expected = self._expected_run_time(start, direction)
+            self._later(expected * 0.85, self._async_endgame_poll)
+        elif kind == MOVE_EXTERNAL:
+            self._later(POLL_INTERVAL_MOVING, self._async_external_poll)
+        self._ui_tick = async_track_time_interval(
+            self.hass,
+            callback(lambda _now: self.async_write_ha_state()),
+            timedelta(seconds=UI_TICK),
         )
-        self._move_direction = direction
-        self._is_opening = direction > 0
-        self._is_closing = direction < 0
-        self._closed = False
         _LOGGER.debug(
-            "%s: start moving %s from position %s",
-            self._attr_name,
-            "up" if direction > 0 else "down",
-            self._move_start_position,
+            "%s: %s move %s from %s",
+            self.entity_id,
+            kind,
+            "up" if direction == UP else "down",
+            start,
         )
+        self.async_write_ha_state()
 
-    def _stop_moving(self, final_position=None):
-        """Finalise a movement."""
-        self._cancel_scheduled_stop()
-        # If the move lasted long enough to fully tilt the slats, the slats
-        # are now at the extreme matching the direction (UP → open, DOWN → closed).
-        if (
-            self._tilt_travel_time > 0
-            and self._move_start_time is not None
-            and self._move_direction != 0
-        ):
-            elapsed = time.time() - self._move_start_time
-            if elapsed >= self._tilt_travel_time:
-                self._tilt_position = (
-                    POSITION_OPEN if self._move_direction > 0 else POSITION_CLOSED
+    @callback
+    def _end_move(self, final: CoverState | None = None) -> None:
+        """Stop tracking the current move at `final` (default: the estimate)."""
+        state = self._current()
+        self._cancel_move_timers()
+        self._move = None
+        self._state = final if final is not None else state
+        _LOGGER.debug("%s: stopped at %s", self.entity_id, self._state)
+        self.async_write_ha_state()
+
+    def _expected_run_time(self, start: CoverState, direction: int) -> float:
+        if start.position is None:
+            return self._timing.travel_time(direction)
+        target = OPEN if direction == UP else CLOSED
+        return time_to_position(start, target, self._timing)[1]
+
+    def _end_stop_state(
+        self, direction: int, current: CoverState | None = None
+    ) -> CoverState:
+        position = OPEN if direction == UP else CLOSED
+        if self._timing.has_tilt:
+            tilt = position
+        else:
+            tilt = (current or self._current()).tilt
+        return CoverState(position, tilt)
+
+    @callback
+    def _async_on_move_duration_elapsed(self) -> None:
+        move = self._move
+        if move is None:
+            return
+        if move.kind == MOVE_TIMED:
+            self.hass.async_create_task(
+                self._hub.async_command(self._channel, "stop"), eager_start=False
+            )
+            self._end_move()
+            self._schedule_confirm_poll()
+        elif move.kind == MOVE_PRESET:
+            self._finish_preset(move)
+
+    @callback
+    def _async_endgame_poll(self) -> None:
+        move = self._move
+        if move is None:
+            return
+        elapsed = self._now() - move.started
+        if elapsed > self._expected_run_time(move.start, move.direction) + END_STOP_GRACE:
+            # No end stop reported: the drive will have stopped there anyway.
+            self._end_move(self._end_stop_state(move.direction))
+            return
+        self._hub.async_request_poll(self._channel)
+        self._later(POLL_INTERVAL_ENDGAME, self._async_endgame_poll)
+
+    @callback
+    def _async_external_poll(self) -> None:
+        move = self._move
+        if move is None:
+            return
+        limit = self._timing.travel_time(move.direction) + END_STOP_GRACE
+        if self._now() - move.started > limit:
+            self._end_move()
+            return
+        self._hub.async_request_poll(self._channel)
+        self._later(POLL_INTERVAL_MOVING, self._async_external_poll)
+
+    @callback
+    def _async_idle_poll(self, _now=None) -> None:
+        if self._move is None:
+            self._hub.async_request_poll(self._channel)
+
+    def _schedule_confirm_poll(self) -> None:
+        if self._confirm_poll is not None:
+            self._confirm_poll()
+
+        @callback
+        def _poll(_now) -> None:
+            self._confirm_poll = None
+            self._hub.async_request_poll(self._channel)
+
+        self._confirm_poll = async_call_later(self.hass, CONFIRM_POLL_DELAY, _poll)
+
+    # ── presets (Elero ventilation / intermediate) ──────────────────────
+
+    async def async_ventilation(self) -> None:
+        """Send the Elero ventilation / tilting command."""
+        await self._async_preset(self._opts.ventilation, "ventilation_tilting")
+
+    async def async_intermediate(self) -> None:
+        """Send the Elero intermediate position command."""
+        await self._async_preset(self._opts.intermediate, "intermediate")
+
+    async def _async_preset(self, preset: PresetOptions, command: str) -> None:
+        self._pending_target = None
+        if preset.mode == PRESET_FIXED:
+            current = self._current()
+            if current.position is not None:
+                direction, seconds = time_to_position(
+                    current, preset.position, self._timing
                 )
-        if final_position is not None:
-            self._position = final_position
-        elif self._move_start_time is not None:
-            self._position = self.current_cover_position
-        self._move_start_time = None
-        self._move_start_position = None
-        self._move_direction = 0
-        self._is_opening = False
-        self._is_closing = False
-        if self._position is not None:
-            self._closed = self._position == 0
-        _LOGGER.debug(
-            "%s: stopped at position %s", self._attr_name, self._position
-        )
-
-    # ── cover commands ──────────────────────────────────────────────────
-
-    def update(self):
-        """Poll the device for its current state."""
-        self._transmitter.info(self._channel)
-
-    def open_cover(self, **kwargs):
-        self._transmitter.up(self._channel)
-        self._start_moving(+1)
-        self._schedule_poll()
-
-    def close_cover(self, **kwargs):
-        self._transmitter.down(self._channel)
-        self._start_moving(-1)
-        self._schedule_poll()
-
-    def stop_cover(self, **kwargs):
-        self._transmitter.stop(self._channel)
-        self._stop_moving()
-
-    def set_cover_position(self, **kwargs):
-        """Move to a specific position (time-based approximation)."""
-        target = kwargs.get(ATTR_POSITION)
-        if target is None:
-            return
-        target = max(0, min(100, target))
-
-        current = self.current_cover_position
-        if current is None:
-            _LOGGER.warning(
-                "%s: position unknown — opening fully to calibrate", self._attr_name
-            )
-            self.open_cover()
-            self._scheduled_stop = self._call_later(
-                self._travel_time + 2,
-                lambda: self.hass.async_add_executor_job(
-                    partial(self.set_cover_position, position=target)
-                ),
-            )
-            return
-
-        diff = target - current
-        if abs(diff) < 2:
-            return
-
-        move_time = abs(diff) / 100.0 * self._travel_time
-
-        if diff > 0:
-            self._transmitter.up(self._channel)
-            self._start_moving(+1)
+                if direction:
+                    self._begin_move(
+                        direction, MOVE_PRESET, duration=seconds, preset=preset
+                    )
         else:
-            self._transmitter.down(self._channel)
-            self._start_moving(-1)
-
-        def _finish_move():
-            _LOGGER.debug(
-                "%s: timed move complete — stopping at target %s",
-                self._attr_name,
-                target,
+            self._ignore_movement_until = self._now() + preset.duration + PRESET_GRACE
+            self._begin_move(
+                preset.direction, MOVE_PRESET, duration=preset.duration, preset=preset
             )
-            self.hass.async_add_executor_job(self._execute_timed_stop, target)
+        await self._hub.async_command(self._channel, command)
 
-        self._scheduled_stop = self._call_later(move_time, _finish_move)
+    @callback
+    def _finish_preset(self, move: _Move) -> None:
+        final = advance(move.start, move.direction, move.duration or 0, self._timing)
+        if move.preset is not None and move.preset.mode == PRESET_FIXED:
+            final = CoverState(move.preset.position, final.tilt)
+        self._end_move(final)
+        self._schedule_confirm_poll()
 
-    def _execute_timed_stop(self, target):
-        self._transmitter.stop(self._channel)
-        self._stop_moving(final_position=target)
-        self._scheduled_stop = None
+    @callback
+    def _on_preset_stop(self, preset: PresetOptions) -> None:
+        """The drive reports it is stopped at a preset position."""
+        move = self._move
+        if move is not None and move.kind == MOVE_PRESET:
+            self._finish_preset(move)
+        elif preset.mode == PRESET_FIXED:
+            self._end_move(CoverState(preset.position, self._current().tilt))
+        elif move is not None:
+            # A step started elsewhere (physical remote): keep the estimate.
+            self._end_move()
+        # A step preset reported while idle is just the drive repeating its
+        # last stop. It says nothing about the position, which is relative,
+        # so the estimate stays as it is.
 
-    def cover_ventilation_tilting_position(self, **kwargs):
-        self._transmitter.ventilation_tilting(self._channel)
-        self._cancel_scheduled_stop()
+    # ── device status ───────────────────────────────────────────────────
 
-    def cover_intermediate_position(self, **kwargs):
-        self._transmitter.intermediate(self._channel)
-        self._cancel_scheduled_stop()
-
-    def close_cover_tilt(self, **kwargs):
-        """Tilt the slats slightly.
-
-        On many Elero remotes the ventilation/tilting button is reprogrammed
-        to perform a small slat tilt rather than a move to a fixed position.
-        If ``tilt_step`` is configured (>0), nudge the tracked position by
-        that many percent (capped at 100, no-op if already fully open).
-        """
-        self.cover_ventilation_tilting_position()
-        if (
-            self._tilt_step > 0
-            and self._position is not None
-            and self._position < POSITION_OPEN
-        ):
-            new_pos = max(0, min(100, round(self._position + self._tilt_step)))
-            self._position = new_pos
-            self._closed = new_pos == 0
-            self._move_start_time = None
-            self._move_start_position = None
-            self._move_direction = 0
-            self._is_opening = False
-            self._is_closing = False
-            self._tilt_step_lock_until = time.time() + 10.0
-            _LOGGER.debug(
-                "%s: tilt step (+%s%%) applied — position now %s",
-                self._attr_name,
-                self._tilt_step,
-                new_pos,
-            )
-
-    def open_cover_tilt(self, **kwargs):
-        self.cover_intermediate_position()
-
-    def stop_cover_tilt(self, **kwargs):
-        self.stop_cover()
-
-    def set_cover_tilt_position(self, **kwargs):
-        """Move slats toward a percentage by sending a brief up/down pulse.
-
-        Requires ``tilt_travel_time`` > 0 (full slat travel in seconds).
-        Falls back to the legacy two-state behaviour otherwise. The vertical
-        position will drift slightly during the move; that drift is corrected
-        next time the cover hits its top or bottom endpoint.
-        """
-        tilt_position = kwargs.get(ATTR_TILT_POSITION)
-        if tilt_position is None:
-            return
-        target = max(0, min(100, int(tilt_position)))
-
-        if self._tilt_travel_time <= 0:
-            if target < 50:
-                self.cover_ventilation_tilting_position()
-            else:
-                self.cover_intermediate_position()
-            return
-
-        current = self._tilt_position
-        if current is None:
-            current = 100 if (self._position or 0) >= 50 else 0
-            _LOGGER.debug(
-                "%s: tilt position unknown, assuming %s based on vertical %s",
-                self._attr_name,
-                current,
-                self._position,
-            )
-
-        diff = target - current
-        if abs(diff) < 2:
-            return
-
-        move_time = abs(diff) / 100.0 * self._tilt_travel_time
-
-        if diff > 0:
-            self._transmitter.up(self._channel)
-            self._start_moving(+1)
-        else:
-            self._transmitter.down(self._channel)
-            self._start_moving(-1)
-
-        self._timed_tilt_target = target
-        self._timed_tilt_lock_until = time.time() + move_time + 8.0
-
-        def _finish_tilt():
-            _LOGGER.debug(
-                "%s: timed tilt complete — stopping at tilt %s",
-                self._attr_name,
-                target,
-            )
-            self.hass.async_add_executor_job(self._execute_timed_tilt_stop, target)
-
-        self._scheduled_stop = self._call_later(move_time, _finish_tilt)
-
-    def _execute_timed_tilt_stop(self, target):
-        self._transmitter.stop(self._channel)
-        self._stop_moving()
-        self._tilt_position = target
-        self._scheduled_stop = None
-
-    # ── response handling ───────────────────────────────────────────────
-
-    def response_handler(self, response):
-        """Callback invoked by the transmitter with a device response."""
-        self._response = response
-        self._set_states()
-
-    def _set_states(self):
-        """Update cover state from the last device response."""
-        status = self._response.get("status")
-        if status is None:
-            return
-
+    @callback
+    def _async_on_status(self, status: str) -> None:
+        if status != self._elero_state and status in STATUSES_FAULT:
+            _LOGGER.warning("%s reports '%s'", self.entity_id, status)
         self._elero_state = status
-        _LOGGER.debug(
-            "%s ch %s: status=%s", self._attr_name, self._channel, status
-        )
 
         if status == INFO_TOP_POSITION_STOP:
-            self._stop_moving(final_position=POSITION_OPEN)
-            self._tilt_position = POSITION_OPEN
-            self._timed_tilt_lock_until = 0.0
-            self._closed = False
-
+            self._on_end_stop(UP)
         elif status == INFO_BOTTOM_POSITION_STOP:
-            self._stop_moving(final_position=POSITION_CLOSED)
-            self._tilt_position = POSITION_CLOSED
-            self._timed_tilt_lock_until = 0.0
-            self._closed = True
-
-        elif status == INFO_INTERMEDIATE_POSITION_STOP:
-            self._stop_moving(final_position=POSITION_INTERMEDIATE)
-            self._tilt_position = POSITION_INTERMEDIATE
-            self._closed = False
-
-        elif status == INFO_TILT_VENTILATION_POS_STOP:
-            if time.time() < self._tilt_step_lock_until:
-                _LOGGER.debug(
-                    "%s: ignoring TILT_VENTILATION_POS_STOP — tilt_step lock active",
-                    self._attr_name,
-                )
-            else:
-                self._stop_moving(final_position=POSITION_TILT_VENTILATION)
-                self._tilt_position = POSITION_TILT_VENTILATION
-                self._closed = False
-
-        elif status == INFO_TOP_POS_STOP_WICH_TILT_POS:
-            if time.time() < self._tilt_step_lock_until:
-                _LOGGER.debug(
-                    "%s: ignoring TOP_POS_STOP_WICH_TILT_POS — tilt_step lock active",
-                    self._attr_name,
-                )
-            else:
-                self._stop_moving(final_position=POSITION_TILT_VENTILATION)
-                self._tilt_position = POSITION_TILT_VENTILATION
-                self._closed = False
-
-        elif status == INFO_BOTTOM_POS_STOP_WICH_INT_POS:
-            self._stop_moving(final_position=POSITION_INTERMEDIATE)
-            self._tilt_position = POSITION_INTERMEDIATE
-            self._closed = False
-
-        elif status in (INFO_START_TO_MOVE_UP, INFO_MOVING_UP):
-            if time.time() < self._tilt_step_lock_until:
-                _LOGGER.debug(
-                    "%s: ignoring %s — tilt_step lock active",
-                    self._attr_name,
-                    status,
-                )
-            else:
-                if self._move_start_time is None:
-                    self._start_moving(+1)
-                if time.time() >= self._timed_tilt_lock_until:
-                    self._tilt_position = None
-
-        elif status in (INFO_START_TO_MOVE_DOWN, INFO_MOVING_DOWN):
-            if time.time() < self._tilt_step_lock_until:
-                _LOGGER.debug(
-                    "%s: ignoring %s — tilt_step lock active",
-                    self._attr_name,
-                    status,
-                )
-            else:
-                if self._move_start_time is None:
-                    self._start_moving(-1)
-                if time.time() >= self._timed_tilt_lock_until:
-                    self._tilt_position = None
-
+            self._on_end_stop(DOWN)
+        elif status in STATUSES_VENTILATION:
+            self._on_preset_stop(self._opts.ventilation)
+        elif status in STATUSES_INTERMEDIATE:
+            self._on_preset_stop(self._opts.intermediate)
+        elif status in STATUSES_UP or status in STATUSES_DOWN:
+            self._on_moving(UP if status in STATUSES_UP else DOWN)
         elif status == INFO_STOPPED_IN_UNDEFINED_POSITION:
-            self._stop_moving()
-            if time.time() < self._timed_tilt_lock_until:
-                self._tilt_position = self._timed_tilt_target
-            # Otherwise keep whatever _stop_moving inferred (or the prior
-            # tilt value if the move was too short to fully reposition slats).
+            if self._move is not None and self._move.kind != MOVE_PRESET:
+                self._end_move()
+        elif self._move is not None:
+            # Faults and anything unexpected: the drive is not moving any more.
+            # Keep the estimate rather than forgetting the position.
+            self._end_move()
+        self.async_write_ha_state()
 
-        elif status == INFO_NO_INFORMATION:
-            self._stop_moving()
-            self._position = None
-            self._tilt_position = None
-            self._closed = None
+    @callback
+    def _on_moving(self, direction: int) -> None:
+        move = self._move
+        if move is not None and move.direction == direction:
+            move.last_moving_seen = self._now()
+            return
+        if self._now() < self._ignore_movement_until:
+            return  # stale report of a preset step that already finished
+        self._begin_move(direction, MOVE_EXTERNAL)
 
-        elif status in (INFO_BLOCKING, INFO_OVERHEATED, INFO_TIMEOUT):
-            self._stop_moving()
-            self._position = None
-            self._tilt_position = None
-            self._closed = None
-            _LOGGER.error(
-                "Transmitter '%s' ch %s error: %s",
-                self._transmitter.get_serial_number(),
-                self._channel,
-                status,
+    @callback
+    def _on_end_stop(self, direction: int) -> None:
+        move = self._move
+        if move is not None and move.learn and move.direction == direction:
+            self._learn(move)
+        self._end_move(self._end_stop_state(direction))
+        if direction == UP and (target := self._pending_target) is not None:
+            self._pending_target = None
+            self.hass.async_create_task(self.async_set_cover_position(position=target))
+
+    def _learn(self, move: _Move) -> None:
+        """Refine the travel time from a full run between the end stops."""
+        if not self._opts.learn_travel_times or move.last_moving_seen is None:
+            return
+        now = self._now()
+        if now - move.last_moving_seen > LEARN_MAX_BRACKET:
+            return
+        # The end stop happened between the last "moving" report and this one.
+        measured = (move.last_moving_seen + now) / 2 - move.started
+        key = "travel_time_up" if move.direction == UP else "travel_time_down"
+        current = self._timing.travel_time(move.direction)
+        low, high = LEARN_TOLERANCE
+        if not low * current <= measured <= high * current:
+            _LOGGER.debug(
+                "%s: ignoring travel time sample %.1fs", self.entity_id, measured
             )
+            return
+        self._learned[key] = round(current + LEARN_RATE * (measured - current), 2)
+        self._apply_learned()
+        _LOGGER.debug("%s: learned %s = %s", self.entity_id, key, self._learned[key])
 
-        elif status in (
-            INFO_SWITCHING_DEVICE_SWITCHED_ON,
-            INFO_SWITCHING_DEVICE_SWITCHED_OFF,
-        ):
-            self._stop_moving()
-            self._position = None
-            self._tilt_position = None
-            self._closed = None
+    # ── cover services ──────────────────────────────────────────────────
 
+    async def async_open_cover(self, **kwargs: Any) -> None:
+        self._pending_target = None
+        self._begin_move(UP, MOVE_RUN)
+        await self._hub.async_command(self._channel, "up")
+
+    async def async_close_cover(self, **kwargs: Any) -> None:
+        self._pending_target = None
+        self._begin_move(DOWN, MOVE_RUN)
+        await self._hub.async_command(self._channel, "down")
+
+    async def async_stop_cover(self, **kwargs: Any) -> None:
+        self._pending_target = None
+        if self._move is not None:
+            self._end_move()
+        await self._hub.async_command(self._channel, "stop")
+        self._schedule_confirm_poll()
+
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        target = max(CLOSED, min(OPEN, float(kwargs[ATTR_POSITION])))
+        # End positions: let the drive run into its end stop, which is exact.
+        if target >= OPEN:
+            await self.async_open_cover()
+            return
+        if target <= CLOSED:
+            await self.async_close_cover()
+            return
+        current = self._current()
+        if current.position is None:
+            _LOGGER.info(
+                "%s: position unknown, opening fully to calibrate", self.entity_id
+            )
+            self._begin_move(UP, MOVE_RUN)
+            self._pending_target = target
+            await self._hub.async_command(self._channel, "up")
+            return
+        direction, seconds = time_to_position(current, target, self._timing)
+        if seconds < MIN_MOVE_SECONDS:
+            return
+        self._begin_move(direction, MOVE_TIMED, duration=seconds)
+        await self._hub.async_command(
+            self._channel, "up" if direction == UP else "down"
+        )
+
+    async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
+        target = max(CLOSED, min(OPEN, float(kwargs[ATTR_TILT_POSITION])))
+        if not self._timing.has_tilt:
+            # No slat timing configured: fall back to the drive's two presets.
+            if target < 50:
+                await self.async_ventilation()
+            else:
+                await self.async_intermediate()
+            return
+        direction, seconds = time_to_tilt(self._current(), target, self._timing)
+        if seconds <= 0:
+            return
+        self._begin_move(direction, MOVE_TIMED, duration=seconds)
+        await self._hub.async_command(
+            self._channel, "up" if direction == UP else "down"
+        )
+
+    async def async_open_cover_tilt(self, **kwargs: Any) -> None:
+        if self._opts.tilt_buttons == TILT_BUTTONS_SLATS and self._timing.has_tilt:
+            await self.async_set_cover_tilt_position(tilt_position=OPEN)
         else:
-            self._stop_moving()
-            self._position = None
-            self._tilt_position = None
-            self._closed = None
-            _LOGGER.error(
-                "Transmitter '%s' ch %s unhandled response: %s",
-                self._transmitter.get_serial_number(),
-                self._channel,
-                status,
-            )
+            await self.async_intermediate()
+
+    async def async_close_cover_tilt(self, **kwargs: Any) -> None:
+        if self._opts.tilt_buttons == TILT_BUTTONS_SLATS and self._timing.has_tilt:
+            await self.async_set_cover_tilt_position(tilt_position=CLOSED)
+        else:
+            await self.async_ventilation()
+
+    async def async_stop_cover_tilt(self, **kwargs: Any) -> None:
+        await self.async_stop_cover()

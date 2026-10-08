@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from custom_components.elero import EleroRemoteTransmitter, EleroTransmitter
+from custom_components.elero.transmitter import EleroRemoteTransmitter, EleroTransmitter
 from custom_components.elero.const import (
     INFO_BOTTOM_POSITION_STOP,
     INFO_TOP_POSITION_STOP,
@@ -53,7 +53,7 @@ def fake_time():
         clock["now"] += seconds
 
     with patch(
-        "custom_components.elero.time",
+        "custom_components.elero.transmitter.time",
         SimpleNamespace(time=lambda: clock["now"], sleep=sleep),
     ):
         yield
@@ -228,7 +228,7 @@ def test_close_serial() -> None:
 def test_remote_transmitter_uses_socket_url() -> None:
     port = FakeSerial([frame(0xAA, 0x04, 0x4B, 0x00, 0x01)])
     with patch(
-        "custom_components.elero.serial.serial_for_url", return_value=port
+        "custom_components.elero.transmitter.serial.serial_for_url", return_value=port
     ) as serial_for_url:
         tx = EleroRemoteTransmitter("SERIAL", "192.0.2.1:20109")
         tx.init_serial()
@@ -236,3 +236,12 @@ def test_remote_transmitter_uses_socket_url() -> None:
     assert serial_for_url.call_args.args[0] == "socket://192.0.2.1:20109"
     assert tx.get_transmitter_state() is True
     assert tx.get_learned_channels() == (1,)
+
+
+def test_poll_attempts_can_be_limited() -> None:
+    """Polls use fewer retries so a silent drive can't block the stick long."""
+    port = FakeSerial()
+    tx = make_tx(port)
+    learn(tx, 1)
+    tx.info(1, attempts=2)
+    assert len(port.written) == 1 + 2

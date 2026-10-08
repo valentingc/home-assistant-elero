@@ -25,7 +25,8 @@
             }
         },
         "error": {
-            "invalid_input": "Bitte alle Felder ausfüllen."
+            "invalid_input": "Bitte alle Felder ausfüllen.",
+            "cannot_connect": "Der Transmitter Stick ist unter dieser Adresse nicht erreichbar."
         },
         "abort": {
             "already_configured": "Dieser Transmitter ist bereits konfiguriert.",
@@ -40,30 +41,133 @@
             "entry_type": "Cover",
             "step": {
                 "user": {
-                    "title": "Cover hinzufügen",
-                    "description": "Konfiguriere einen Elero-gesteuerten Cover (Jalousie, Rollladen, Markise, …).",
+                    "title": "Behang hinzufügen",
+                    "description": "Einen über Elero gesteuerten Behang einrichten (Jalousie, Rollladen, Markise, …).",
                     "data": {
                         "name": "Name",
-                        "channel": "Kanal (1-15)",
+                        "channel": "Kanal",
                         "device_class": "Geräteklasse",
                         "supported_features": "Unterstützte Funktionen",
-                        "travel_time": "Laufzeit (Sekunden für komplettes Auf/Zu)",
-                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)",
-                        "tilt_travel_time": "Tilt-Laufzeit (Sekunden für komplettes Lamellen Auf/Zu, 0 = Tilt-Slider deaktivieren)"
+                        "tilt_buttons": "Lamellen öffnen/schließen"
+                    },
+                    "data_description": {
+                        "channel": "Kanal (1–15), auf den der Antrieb am Stick eingelernt ist. Bei verbundenem Stick werden nur freie eingelernte Kanäle angeboten.",
+                        "tilt_buttons": "Was die Lamellen-Schaltflächen in HA tun."
+                    },
+                    "sections": {
+                        "timing": {
+                            "name": "Laufzeiten",
+                            "description": "Mit der Stoppuhr gemessene Zeiten des Antriebs.",
+                            "data": {
+                                "travel_time_up": "Laufzeit hoch",
+                                "travel_time_down": "Laufzeit runter",
+                                "tilt_travel_time": "Wendezeit der Lamellen",
+                                "learn_travel_times": "Laufzeiten lernen"
+                            },
+                            "data_description": {
+                                "travel_time_up": "Sekunden für eine volle Fahrt von zu nach offen.",
+                                "travel_time_down": "Sekunden für eine volle Fahrt von offen nach zu.",
+                                "tilt_travel_time": "Sekunden, bis die Lamellen ganz gewendet sind, bevor der Behang fährt. 0 bei Behängen ohne Lamellen.",
+                                "learn_travel_times": "Laufzeiten aus vollen Fahrten zwischen den Endlagen verfeinern."
+                            }
+                        },
+                        "ventilation": {
+                            "name": "Lüftungsbefehl (Lamellen schließen)",
+                            "description": "Elero Lüftungs-/Wendeposition.",
+                            "data": {
+                                "mode": "Was der Befehl macht",
+                                "position": "Feste Position",
+                                "duration": "Dauer der kurzen Fahrt"
+                            },
+                            "data_description": {
+                                "mode": "Wie der Antrieb für diesen Befehl programmiert ist.",
+                                "position": "Wo der Antrieb hält, bei „Feste Position“.",
+                                "duration": "Wie lange der Antrieb fährt, bei „Kurz hoch/runter“."
+                            }
+                        },
+                        "intermediate": {
+                            "name": "Zwischenpositionsbefehl (Lamellen öffnen)",
+                            "description": "Elero Zwischenposition.",
+                            "data": {
+                                "mode": "Was der Befehl macht",
+                                "position": "Feste Position",
+                                "duration": "Dauer der kurzen Fahrt"
+                            },
+                            "data_description": {
+                                "mode": "Wie der Antrieb für diesen Befehl programmiert ist.",
+                                "position": "Wo der Antrieb hält, bei „Feste Position“.",
+                                "duration": "Wie lange der Antrieb fährt, bei „Kurz hoch/runter“."
+                            }
+                        }
                     }
                 },
                 "reconfigure": {
-                    "title": "Cover bearbeiten",
+                    "title": "Behang bearbeiten",
+                    "description": "Einstellungen dieses Behangs ändern.",
                     "data": {
                         "name": "Name",
-                        "channel": "Kanal (1-15)",
+                        "channel": "Kanal",
                         "device_class": "Geräteklasse",
                         "supported_features": "Unterstützte Funktionen",
-                        "travel_time": "Laufzeit (Sekunden für komplettes Auf/Zu)",
-                        "tilt_step": "Tilt-Schritt (% pro Druck auf Close-Tilt, 0 = deaktiviert)",
-                        "tilt_travel_time": "Tilt-Laufzeit (Sekunden für komplettes Lamellen Auf/Zu, 0 = Tilt-Slider deaktivieren)"
+                        "tilt_buttons": "Lamellen öffnen/schließen"
+                    },
+                    "data_description": {
+                        "channel": "Kanal (1–15), auf den der Antrieb am Stick eingelernt ist. Bei verbundenem Stick werden nur freie eingelernte Kanäle angeboten.",
+                        "tilt_buttons": "Was die Lamellen-Schaltflächen in HA tun."
+                    },
+                    "sections": {
+                        "timing": {
+                            "name": "Laufzeiten",
+                            "description": "Mit der Stoppuhr gemessene Zeiten des Antriebs.",
+                            "data": {
+                                "travel_time_up": "Laufzeit hoch",
+                                "travel_time_down": "Laufzeit runter",
+                                "tilt_travel_time": "Wendezeit der Lamellen",
+                                "learn_travel_times": "Laufzeiten lernen"
+                            },
+                            "data_description": {
+                                "travel_time_up": "Sekunden für eine volle Fahrt von zu nach offen.",
+                                "travel_time_down": "Sekunden für eine volle Fahrt von offen nach zu.",
+                                "tilt_travel_time": "Sekunden, bis die Lamellen ganz gewendet sind, bevor der Behang fährt. 0 bei Behängen ohne Lamellen.",
+                                "learn_travel_times": "Laufzeiten aus vollen Fahrten zwischen den Endlagen verfeinern."
+                            }
+                        },
+                        "ventilation": {
+                            "name": "Lüftungsbefehl (Lamellen schließen)",
+                            "description": "Elero Lüftungs-/Wendeposition.",
+                            "data": {
+                                "mode": "Was der Befehl macht",
+                                "position": "Feste Position",
+                                "duration": "Dauer der kurzen Fahrt"
+                            },
+                            "data_description": {
+                                "mode": "Wie der Antrieb für diesen Befehl programmiert ist.",
+                                "position": "Wo der Antrieb hält, bei „Feste Position“.",
+                                "duration": "Wie lange der Antrieb fährt, bei „Kurz hoch/runter“."
+                            }
+                        },
+                        "intermediate": {
+                            "name": "Zwischenpositionsbefehl (Lamellen öffnen)",
+                            "description": "Elero Zwischenposition.",
+                            "data": {
+                                "mode": "Was der Befehl macht",
+                                "position": "Feste Position",
+                                "duration": "Dauer der kurzen Fahrt"
+                            },
+                            "data_description": {
+                                "mode": "Wie der Antrieb für diesen Befehl programmiert ist.",
+                                "position": "Wo der Antrieb hält, bei „Feste Position“.",
+                                "duration": "Wie lange der Antrieb fährt, bei „Kurz hoch/runter“."
+                            }
+                        }
                     }
                 }
+            },
+            "error": {
+                "channel_in_use": "Dieser Kanal wird bereits von einem anderen Behang verwendet."
+            },
+            "abort": {
+                "reconfigure_successful": "Der Behang wurde geändert."
             }
         }
     },
@@ -71,6 +175,31 @@
         "deprecated_yaml": {
             "title": "Elero YAML-Konfiguration ist veraltet",
             "description": "Die Elero-Konfiguration aus configuration.yaml wurde in einen Config-Entry importiert. Entferne den YAML-Block, sobald du unter Einstellungen → Geräte & Dienste verifiziert hast, dass die Integration korrekt eingerichtet ist."
+        }
+    },
+    "selector": {
+        "preset_mode": {
+            "options": {
+                "fixed": "Feste Position",
+                "step_up": "Kurz hochfahren",
+                "step_down": "Kurz runterfahren"
+            }
+        },
+        "tilt_buttons": {
+            "options": {
+                "presets": "Elero-Befehle (öffnen = Zwischenposition, schließen = Lüftung)",
+                "slats": "Lamellen ganz öffnen / schließen"
+            }
+        }
+    },
+    "entity": {
+        "button": {
+            "ventilation": {
+                "name": "Lüftung"
+            },
+            "intermediate": {
+                "name": "Zwischenposition"
+            }
         }
     }
 }

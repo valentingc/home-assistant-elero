@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import DEFAULT, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigSubentryData
@@ -11,20 +11,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_component import DATA_INSTANCES
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.elero import EleroTransmitter
 from custom_components.elero.const import (
     CONF_CHANNEL,
     CONF_CONNECTION_TYPE,
     CONF_REMOTE_TRANSMITTERS_ADDRESS,
-    CONF_SUPPORTED_FEATURES,
-    CONF_TILT_STEP,
-    CONF_TILT_TRAVEL_TIME,
     CONF_TRANSMITTER_SERIAL_NUMBER,
-    CONF_TRAVEL_TIME,
     CONNECTION_REMOTE,
     DOMAIN,
     SUBENTRY_TYPE_COVER,
 )
+from custom_components.elero.transmitter import EleroTransmitter
 
 TRANSMITTER_SERIAL = "AABBCCDD"
 REMOTE_ADDRESS = "192.0.2.1:20109"
@@ -70,6 +66,16 @@ def mock_transmitter():
     tx = MagicMock(spec=EleroTransmitter)
     tx.get_serial_number.return_value = TRANSMITTER_SERIAL
     tx.get_transmitter_state.return_value = True
+    tx.get_learned_channels.return_value = (1, 2, 3, 4, 5)
+    # Remember status callbacks across reset_mock(); return_value still
+    # decides whether the channel counts as taught-in.
+    tx.handlers = {}
+
+    def set_channel(channel, handler):
+        tx.handlers[channel] = handler
+        return DEFAULT
+
+    tx.set_channel.side_effect = set_channel
     tx.set_channel.return_value = True
     # Diagnostic attributes surfaced in the cover's state attributes.
     tx.last_command_ts = None
@@ -85,31 +91,70 @@ def mock_transmitter():
         yield tx
 
 
-def cover_subentry(
+def cover_data(
     name: str = "Living room",
     channel: int = 1,
     *,
     device_class: str = "venetian blind",
     features: list[str] | None = None,
-    travel_time: float = 30.0,
-    tilt_step: float = 2.0,
-    tilt_travel_time: float = 2.0,
-) -> ConfigSubentryData:
-    """Build cover sub-entry data as the config flow would store it."""
+    travel_up: float = 52.0,
+    travel_down: float = 50.0,
+    tilt_time: float = 2.0,
+    tilt_buttons: str = "presets",
+    learn: bool = False,
+    ventilation: dict | None = None,
+    intermediate: dict | None = None,
+) -> dict[str, Any]:
+    """Cover sub-entry data in the current (4.2) format."""
+    return {
+        "name": name,
+        CONF_CHANNEL: channel,
+        "device_class": device_class,
+        "supported_features": features or ALL_FEATURES,
+        "tilt_buttons": tilt_buttons,
+        "travel_time_up": travel_up,
+        "travel_time_down": travel_down,
+        "tilt_travel_time": tilt_time,
+        "learn_travel_times": learn,
+        "ventilation": ventilation
+        or {"mode": "step_up", "position": 25.0, "duration": 1.0},
+        "intermediate": intermediate
+        or {"mode": "fixed", "position": 75.0, "duration": 1.0},
+    }
+
+
+def cover_subentry(name: str = "Living room", channel: int = 1, **kwargs) -> ConfigSubentryData:
+    return subentry_from_data(cover_data(name, channel, **kwargs))
+
+
+def subentry_from_data(data: dict[str, Any]) -> ConfigSubentryData:
     return ConfigSubentryData(
         subentry_type=SUBENTRY_TYPE_COVER,
-        title=name,
-        unique_id=f"{TRANSMITTER_SERIAL}_{channel}",
-        data={
-            "name": name,
-            CONF_CHANNEL: channel,
-            "device_class": device_class,
-            CONF_SUPPORTED_FEATURES: features or ALL_FEATURES,
-            CONF_TRAVEL_TIME: travel_time,
-            CONF_TILT_STEP: tilt_step,
-            CONF_TILT_TRAVEL_TIME: tilt_travel_time,
-        },
+        title=data["name"],
+        unique_id=f"{TRANSMITTER_SERIAL}_{data[CONF_CHANNEL]}",
+        data=data,
     )
+
+
+def cover_form(**kwargs) -> dict[str, Any]:
+    """Cover sub-entry form input (with sections), as the UI submits it."""
+    data = cover_data(**kwargs)
+    return {
+        "name": data["name"],
+        # Dropdown (stick connected) and number box both accept a string.
+        CONF_CHANNEL: str(data[CONF_CHANNEL]),
+        "device_class": data["device_class"],
+        "supported_features": data["supported_features"],
+        "tilt_buttons": data["tilt_buttons"],
+        "timing": {
+            "travel_time_up": data["travel_time_up"],
+            "travel_time_down": data["travel_time_down"],
+            "tilt_travel_time": data["tilt_travel_time"],
+            "learn_travel_times": data["learn_travel_times"],
+        },
+        "ventilation": data["ventilation"],
+        "intermediate": data["intermediate"],
+    }
 
 
 def make_entry(subentries: list[ConfigSubentryData] | None = None) -> MockConfigEntry:
@@ -146,3 +191,22 @@ def get_entity(hass: HomeAssistant, entity_id: str) -> Any:
     entity = hass.data[DATA_INSTANCES]["cover"].get_entity(entity_id)
     assert entity is not None, entity_id
     return entity
+
+
+def status_handler(mock_transmitter, channel: int = 1):
+    """The callback the hub registered with the stick for `channel`."""
+    assert channel in mock_transmitter.handlers, f"channel {channel} not registered"
+    return mock_transmitter.handlers[channel]
+
+
+@pytest.fixture
+def respond(hass: HomeAssistant, mock_transmitter):
+    """Report a drive status, as the stick would from the executor thread."""
+
+    async def _respond(status: str, channel: int = 1) -> None:
+        await hass.async_add_executor_job(
+            status_handler(mock_transmitter, channel), {"status": status}
+        )
+        await hass.async_block_till_done()
+
+    return _respond

@@ -15,11 +15,12 @@ from homeassistant.helpers import (
 from homeassistant.setup import async_setup_component
 
 from custom_components.elero import cover as cover_platform
+from custom_components.elero.diagnostics import async_get_config_entry_diagnostics
 from custom_components.elero.const import (
     CONF_CHANNEL,
     CONF_CONNECTION_TYPE,
     CONF_TRANSMITTER_SERIAL_NUMBER,
-    CONF_TRAVEL_TIME,
+    CONF_REMOTE_TRANSMITTERS_ADDRESS,
     CONNECTION_REMOTE,
     DOMAIN,
     SUBENTRY_TYPE_COVER,
@@ -28,6 +29,7 @@ from custom_components.elero.const import (
 from .conftest import (
     REMOTE_ADDRESS,
     TRANSMITTER_SERIAL,
+    cover_form,
     cover_subentry,
     make_entry,
     setup_entry,
@@ -93,7 +95,7 @@ async def test_unload_closes_serial(
 
     assert entry.state is ConfigEntryState.NOT_LOADED
     mock_transmitter.close_serial.assert_called_once()
-    assert entry.entry_id not in hass.data[DOMAIN]
+    assert hass.states.get("cover.living_room").state == "unavailable"
 
 
 async def test_added_cover_subentry_is_set_up(
@@ -104,19 +106,18 @@ async def test_added_cover_subentry_is_set_up(
     result = await hass.config_entries.subentries.async_init(
         (entry.entry_id, SUBENTRY_TYPE_COVER), context={"source": "user"}
     )
+    # Only taught-in channels that no cover uses yet are offered.
+    channel_selector = result["data_schema"].schema[CONF_CHANNEL]
+    assert channel_selector.config["options"] == ["2", "3", "4", "5"]
+
     result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            "name": "Bedroom",
-            CONF_CHANNEL: 3,
-            "device_class": "roller shutter",
-            "supported_features": ["up", "down", "stop"],
-        },
+        result["flow_id"], cover_form(name="Bedroom", channel=3)
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
     assert hass.states.get("cover.bedroom") is not None
+    assert hass.states.get("button.bedroom_ventilation") is not None
 
 
 async def test_reconfigured_cover_subentry_is_applied(
@@ -127,21 +128,74 @@ async def test_reconfigured_cover_subentry_is_applied(
     subentry_id = next(iter(entry.subentries))
     result = await entry.start_subentry_reconfigure_flow(hass, subentry_id)
     result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"],
-        {
-            "name": "Living room",
-            CONF_CHANNEL: 1,
-            "device_class": "venetian blind",
-            "supported_features": ["up", "down", "stop"],
-            CONF_TRAVEL_TIME: 42,
-        },
+        result["flow_id"], cover_form(travel_up=42)
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     await hass.async_block_till_done()
 
     state = hass.states.get("cover.living_room")
-    assert state.attributes["travel_time"] == 42
+    assert state.attributes["travel_time_up"] == 42
+
+
+async def test_channel_change_keeps_entities_and_device(
+    hass: HomeAssistant, init_integration
+) -> None:
+    """Moving a cover to another channel keeps its entity ids and device."""
+    entry = init_integration
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device_by_identifier(
+        (DOMAIN, f"{TRANSMITTER_SERIAL}_1"), entry.entry_id
+    )
+
+    subentry_id = next(iter(entry.subentries))
+    result = await entry.start_subentry_reconfigure_flow(hass, subentry_id)
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], cover_form(channel=4)
+    )
+    assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+
+    cover = ent_reg.async_get("cover.living_room")
+    assert cover.unique_id == f"{TRANSMITTER_SERIAL}_4"
+    assert cover.device_id == device.id
+    assert (
+        ent_reg.async_get("button.living_room_ventilation").unique_id
+        == f"{TRANSMITTER_SERIAL}_4_ventilation"
+    )
+    assert dev_reg.async_get(device.id).identifiers == {
+        (DOMAIN, f"{TRANSMITTER_SERIAL}_4")
+    }
+    assert entry.subentries[subentry_id].unique_id == f"{TRANSMITTER_SERIAL}_4"
+    assert hass.states.get("cover.living_room").attributes["channel"] == 4
+
+
+async def test_channel_in_use_is_rejected(
+    hass: HomeAssistant, mock_transmitter
+) -> None:
+    entry = make_entry([cover_subentry("Living room", 1), cover_subentry("Kitchen", 2)])
+    await setup_entry(hass, entry)
+    kitchen_id = next(
+        sid for sid, sub in entry.subentries.items() if sub.title == "Kitchen"
+    )
+    # Number box fallback lets one type any channel; make sure it is checked.
+    with patch.object(mock_transmitter, "get_learned_channels", return_value=()):
+        result = await entry.start_subentry_reconfigure_flow(hass, kitchen_id)
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], cover_form(name="Kitchen", channel=1)
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_CHANNEL: "channel_in_use"}
+
+
+async def test_diagnostics(hass: HomeAssistant, init_integration) -> None:
+    diag = await async_get_config_entry_diagnostics(hass, init_integration)
+    assert diag["entry"][CONF_REMOTE_TRANSMITTERS_ADDRESS] == "**REDACTED**"
+    assert diag["transmitter"]["learned_channels"] == [1, 2, 3, 4, 5]
+    (cover,) = diag["covers"].values()
+    assert cover["entity_id"] == "cover.living_room"
+    assert cover["options"]["ventilation"]["mode"] == "step_up"
 
 
 async def test_yaml_is_imported(hass: HomeAssistant, mock_transmitter) -> None:
@@ -209,27 +263,16 @@ async def test_yaml_import_is_idempotent(
     assert len(entry.subentries) == 1
 
 
-async def test_legacy_platform_skips_imported_covers(
-    hass: HomeAssistant, init_integration
+async def test_legacy_platform_creates_nothing(hass: HomeAssistant) -> None:
+    """`platform: elero` covers are imported as sub-entries instead."""
+    add_entities = MagicMock()
+    cover_platform.setup_platform(hass, {"covers": {}}, add_entities)
+    add_entities.assert_not_called()
+
+
+async def test_serial_closed_on_home_assistant_stop(
+    hass: HomeAssistant, init_integration, mock_transmitter
 ) -> None:
-    """Legacy `platform: elero` only adds covers that aren't sub-entries yet."""
-    def yaml_cover(name: str, channel: int) -> dict:
-        return {
-            "serial_number": TRANSMITTER_SERIAL,
-            "name": name,
-            "channel": channel,
-            "device_class": "roller shutter",
-            "supported_features": ["up", "down"],
-            "travel_time": 20.0,
-        }
-
-    add_devices = MagicMock()
-    await hass.async_add_executor_job(
-        cover_platform.setup_platform,
-        hass,
-        {"covers": {"living": yaml_cover("Living room", 1), "attic": yaml_cover("Attic", 6)}},
-        add_devices,
-    )
-
-    added = add_devices.call_args.args[0]
-    assert [c.name for c in added] == ["Attic"]
+    hass.bus.async_fire("homeassistant_stop")
+    await hass.async_block_till_done()
+    mock_transmitter.close_serial.assert_called()

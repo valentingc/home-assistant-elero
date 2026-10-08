@@ -4,7 +4,7 @@ from homeassistant.const import Platform
 
 DOMAIN = "elero"
 
-PLATFORMS = [Platform.COVER]
+PLATFORMS = [Platform.COVER, Platform.BUTTON]
 
 # ── Connection types ────────────────────────────────────────────────────
 CONNECTION_LOCAL = "local"
@@ -25,9 +25,32 @@ CONF_PORT = "port"
 # ── Config keys (cover / sub-entry level) ───────────────────────────────
 CONF_CHANNEL = "channel"
 CONF_SUPPORTED_FEATURES = "supported_features"
-CONF_TRAVEL_TIME = "travel_time"
-CONF_TILT_STEP = "tilt_step"
+CONF_TRAVEL_TIME = "travel_time"  # legacy: single travel time for both directions
+CONF_TRAVEL_TIME_UP = "travel_time_up"
+CONF_TRAVEL_TIME_DOWN = "travel_time_down"
+CONF_TILT_STEP = "tilt_step"  # legacy: % bump per ventilation press
 CONF_TILT_TRAVEL_TIME = "tilt_travel_time"
+CONF_TILT_BUTTONS = "tilt_buttons"
+CONF_LEARN_TRAVEL_TIMES = "learn_travel_times"
+CONF_VENTILATION = "ventilation"
+CONF_INTERMEDIATE = "intermediate"
+CONF_PRESET_MODE = "mode"
+CONF_PRESET_POSITION = "position"
+CONF_PRESET_DURATION = "duration"
+
+# Config-flow form sections
+SECTION_TIMING = "timing"
+
+# What an Elero preset command (ventilation / intermediate) does on the drive.
+PRESET_FIXED = "fixed"  # drives to a fixed programmed position
+PRESET_STEP_UP = "step_up"  # drives up for a short time from wherever it is
+PRESET_STEP_DOWN = "step_down"  # drives down for a short time
+PRESET_MODES = [PRESET_FIXED, PRESET_STEP_UP, PRESET_STEP_DOWN]
+
+# What HA's open/close tilt controls do.
+TILT_BUTTONS_PRESETS = "presets"  # open tilt = intermediate, close tilt = ventilation
+TILT_BUTTONS_SLATS = "slats"  # open/close tilt fully rotate the slats
+TILT_BUTTONS_MODES = [TILT_BUTTONS_PRESETS, TILT_BUTTONS_SLATS]
 
 # Sub-entry types
 SUBENTRY_TYPE_COVER = "cover"
@@ -40,6 +63,9 @@ DEFAULT_STOPBITS = 1
 DEFAULT_TRAVEL_TIME = 50.0
 DEFAULT_TILT_STEP = 2.0
 DEFAULT_TILT_TRAVEL_TIME = 2.0
+DEFAULT_VENTILATION_POSITION = 25
+DEFAULT_INTERMEDIATE_POSITION = 75
+DEFAULT_PRESET_DURATION = 1.0
 
 DEFAULT_BRAND = "elero"
 DEFAULT_PRODUCT = "Transmitter Stick"
@@ -127,15 +153,18 @@ SUPPORTED_FEATURE_NAMES = [
 
 # ── Cover device classes (config-time string → HA device_class) ─────────
 ELERO_COVER_DEVICE_CLASSES = {
-    "awning": "window",
-    "interior shading": "window",
-    "roller shutter": "window",
+    "awning": "awning",
+    "interior shading": "shade",
+    "roller shutter": "shutter",
     "rolling door": "garage",
-    "venetian blind": "window",
+    "venetian blind": "blind",
 }
 
-# ── Known Elero stop positions (0 = closed, 100 = open) ─────────────────
-POSITION_CLOSED = 0
-POSITION_OPEN = 100
-POSITION_INTERMEDIATE = 75
-POSITION_TILT_VENTILATION = 25
+# Features that involve the slats; the tilt phase is only modelled for
+# covers that use at least one of them.
+TILT_FEATURES = {"open_tilt", "close_tilt", "stop_tilt", "set_tilt_position"}
+
+# ── Polling ─────────────────────────────────────────────────────────────
+POLL_INTERVAL_IDLE = 30.0  # seconds between status polls while stopped
+POLL_INTERVAL_MOVING = 2.0  # while a move with an unknown end is tracked
+POLL_INTERVAL_ENDGAME = 1.0  # near the expected end of a full run
