@@ -187,6 +187,8 @@ async def test_ventilation_step_from_bottom_opens_slats(
     assert not get_entity(hass, ENTITY_ID).is_opening
     assert attrs(hass)["current_position"] == 0
     assert attrs(hass)["current_tilt_position"] == 50  # 1 s of a 2 s swing
+    # Down, but the slats let light through: not closed.
+    assert hass.states.get(ENTITY_ID).state == "open"
     mock_transmitter.up.assert_not_called()
     mock_transmitter.stop.assert_not_called()  # the drive stops itself
 
@@ -203,6 +205,7 @@ async def test_ventilation_stop_reports_do_not_jump_to_25(
         await tick(hass, freezer, 30)
     assert attrs(hass)["current_position"] == 0
     assert attrs(hass)["current_tilt_position"] == 50
+    assert hass.states.get(ENTITY_ID).state == "open"
 
 
 async def test_ventilation_step_from_mid_position(
