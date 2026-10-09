@@ -382,7 +382,13 @@ class EleroCover(CoverEntity, RestoreEntity):
     @property
     def is_closed(self) -> bool | None:
         position = self.current_cover_position
-        return None if position is None else position == 0
+        if position is None:
+            return None
+        if position != 0:
+            return False
+        # A blind at the bottom with its slats turned open lets light through.
+        tilt = self.current_cover_tilt_position
+        return not self._timing.has_tilt or tilt is None or tilt == 0
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
