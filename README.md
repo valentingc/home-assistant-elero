@@ -164,6 +164,15 @@ feature.
 Positions use HA's convention: `0` = closed, `100` = open. Tilt `0` = slats closed,
 `100` = slats open.
 
+HA greys out *close* at position `0` and *close / open tilt* at tilt `0` / `100`. So that
+the buttons stay usable:
+
+- A blind at the bottom with its slats open reports position `1`: it is open, and *close*
+  turns the slats shut.
+- With *Open/close tilt buttons* set to *Elero commands*, the reported tilt stays between
+  `1` and `99` %, because ventilation and intermediate work from any slat angle. With
+  *Rotate the slats* it is the real `0`–`100` %.
+
 ### The motion model
 
 Elero drives report *where they stopped* (top, bottom, a preset position), or that they
@@ -520,6 +529,9 @@ such deprecations can escalate into hard errors (as happened with `via_device` i
 
 ## Changelog
 
+- **4.3.6** (2026-10-10): Corrupt or misaligned replies from the stick are discarded and the command retried, instead of applying a garbled status to a cover; leftover bytes from an earlier reply are flushed before each command.
+- **4.3.5** (2026-10-10): The close and close tilt buttons stay usable around ventilation: a closed blind can ventilate, and a ventilated blind (bottom, slats open) can close again. Released reporting itself as 4.3.3.
+- **4.3.4** (2026-10-09): A blind at the bottom with its slats open shows as open, not closed. Released reporting itself as 4.3.3.
 - **4.3.3** (2026-10-08): Version numbers in the integration match the release tag again (4.3.0–4.3.2 reported themselves as 4.2.0).
 - **4.3.2** (2026-10-08): No code changes.
 - **4.3.1** (2026-10-08): Cover groups: each member's move is measured from when its command actually left the stick and ends when its STOP did, so group positions stay accurate; a move from a physical remote triggers an immediate poll of the other covers on the stick. Proper HA device classes (blind, shutter, awning, shade). `iot_class` corrected to `local_polling`.
