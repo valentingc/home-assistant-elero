@@ -42,6 +42,10 @@ _LOGGER = logging.getLogger(__name__)
 MAX_ATTEMPTS = 4
 
 
+class CorruptFrameError(Exception):
+    """A response that is misaligned or fails its checksum."""
+
+
 class EleroTransmitter:
     """Representation of an Elero Centero USB Transmitter Stick."""
 
@@ -255,6 +259,9 @@ class EleroTransmitter:
                     except Exception:
                         pass
 
+                    # Drop leftovers of an earlier, timed-out or corrupt reply
+                    # so they are not read as the answer to this command.
+                    self._serial.reset_input_buffer()
                     self._serial.write(bytes_data)
                     ser_resp = self._read_exact(resp_length, overall_timeout=2.5)
                 finally:
@@ -269,6 +276,7 @@ class EleroTransmitter:
                     self._recover_serial()
                     continue
 
+                self._validate_frame(ser_resp)
                 resp = self.__parse_response(ser_resp, channel)
                 rsp = resp.get("status")
                 chs = resp.get("chs")
@@ -290,6 +298,13 @@ class EleroTransmitter:
                 self.last_response_ts = time.time()
                 self.consecutive_failures = 0
                 break
+            except CorruptFrameError as exc:
+                # Never act on it: a garbled status would move the estimate of
+                # whichever cover its channel bits happen to name.
+                _LOGGER.warning(
+                    "%s for '%s' (attempt %d), retrying", exc, command_text, attempt
+                )
+                self.consecutive_failures += 1
             except TimeoutError:
                 _LOGGER.warning(
                     "Timeout waiting full response for '%s' (attempt %d)",
@@ -331,6 +346,13 @@ class EleroTransmitter:
             )
         return bytes(buf)
 
+    def _validate_frame(self, ser_resp):
+        if ser_resp[0] != BYTE_HEADER:
+            raise CorruptFrameError(f"Misaligned response {ser_resp!r}")
+        if sum(ser_resp) % 256 != 0:
+            self.checksum_error_count += 1
+            raise CorruptFrameError(f"Checksum error in response {ser_resp!r}")
+
     def _recover_serial(self):
         try:
             if self._serial and self._serial.is_open:
@@ -348,9 +370,9 @@ class EleroTransmitter:
                 self._learned_channels[ch](resp)
             else:
                 _LOGGER.error(
-                    "The channel is not learned '%s' on the transmitter: '%s'.",
-                    self._serial_number,
+                    "The channel '%s' is not learned on the transmitter: '%s'.",
                     ch,
+                    self._serial_number,
                 )
 
     def __parse_response(self, ser_resp, channel):
@@ -367,14 +389,6 @@ class EleroTransmitter:
         }
         response["chs"] = set(response["ch_h"] + response["ch_l"])
         resp_length = len(ser_resp)
-        if (sum(ser_resp) % 256) != 0:
-            self.checksum_error_count += 1
-            _LOGGER.error(
-                "Checksum error from transmitter '%s' channel '%s' raw %s",
-                self._serial_number,
-                channel,
-                ser_resp,
-            )
         if resp_length == RESPONSE_LENGTH_CHECK:
             response["cs"] = ser_resp[5]
         elif resp_length == RESPONSE_LENGTH_SEND:

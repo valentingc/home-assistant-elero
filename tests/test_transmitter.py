@@ -31,6 +31,10 @@ class FakeSerial:
         self.write_timeout = None
         self._pending = b""
 
+    def reset_input_buffer(self) -> None:
+        self.flushed_before_write = len(self.written) + 1
+        self._pending = b""
+
     def write(self, data: bytes) -> int:
         self.written.append(bytes(data))
         self._pending = self.responses.pop(0) if self.responses else b""
@@ -154,21 +158,47 @@ def test_unknown_status_reported_as_unknown() -> None:
     assert handler.call_args.args[0]["status"] == INFO_UNKNOWN
 
 
-def test_checksum_error_is_counted() -> None:
+def test_checksum_error_is_counted_and_retried() -> None:
     port = FakeSerial()
     tx = make_tx(port)
     learn(tx, 1)
     handler = MagicMock()
     tx.set_channel(1, handler)
 
-    bad = bytearray(frame(0xAA, 0x05, 0x4D, 0x00, 0x01, 0x02))
+    bad = bytearray(frame(0xAA, 0x05, 0x4D, 0x00, 0x01, 0x01))
     bad[-1] ^= 0xFF
-    port.responses.append(bytes(bad))
+    port.responses += [bytes(bad), frame(0xAA, 0x05, 0x4D, 0x00, 0x01, 0x02)]
     tx.info(1)
 
     assert tx.checksum_error_count == 1
-    # The status is still delivered.
+    assert len(port.written) == 1 + 2  # check + two attempts
+    # Only the good frame's status is delivered.
+    handler.assert_called_once()
     assert handler.call_args.args[0]["status"] == INFO_BOTTOM_POSITION_STOP
+
+
+def test_misaligned_response_is_retried() -> None:
+    port = FakeSerial()
+    tx = make_tx(port)
+    learn(tx, 1)
+    handler = MagicMock()
+    tx.set_channel(1, handler)
+
+    good = frame(0xAA, 0x05, 0x4D, 0x00, 0x01, 0x01)
+    port.responses += [good[3:] + good[:3], good]
+    tx.info(1)
+
+    assert len(port.written) == 1 + 2
+    assert tx.reconnect_count == 0  # the port itself is fine
+    handler.assert_called_once()
+    assert handler.call_args.args[0]["status"] == INFO_TOP_POSITION_STOP
+
+
+def test_input_buffer_flushed_before_each_write() -> None:
+    port = FakeSerial([frame(0xAA, 0x05, 0x4D, 0x00, 0x01, 0x01)])
+    tx = make_tx(port)
+    tx.up(1)
+    assert port.flushed_before_write == len(port.written)
 
 
 # ── retries and recovery ────────────────────────────────────────────────
