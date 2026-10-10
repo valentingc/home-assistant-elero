@@ -145,11 +145,13 @@ async def test_polls_while_idle(
 # ── end stops ───────────────────────────────────────────────────────────
 
 
+# With the default preset tilt buttons the reported tilt stays within 1..99 %,
+# so HA keeps the (preset) tilt buttons enabled at the ends.
 @pytest.mark.parametrize(
     ("status", "position", "tilt", "state"),
     [
-        (INFO_TOP_POSITION_STOP, 100, 100, "open"),
-        (INFO_BOTTOM_POSITION_STOP, 0, 0, "closed"),
+        (INFO_TOP_POSITION_STOP, 100, 99, "open"),
+        (INFO_BOTTOM_POSITION_STOP, 0, 1, "closed"),
     ],
 )
 async def test_end_stops(
@@ -185,7 +187,7 @@ async def test_ventilation_step_from_bottom_opens_slats(
 
     await tick(hass, freezer, 1)
     assert not get_entity(hass, ENTITY_ID).is_opening
-    assert attrs(hass)["current_position"] == 0
+    assert attrs(hass)["current_position"] == 1  # the slats are open, so not fully closed
     assert attrs(hass)["current_tilt_position"] == 50  # 1 s of a 2 s swing
     # Down, but the slats let light through: not closed.
     assert hass.states.get(ENTITY_ID).state == "open"
@@ -203,7 +205,7 @@ async def test_ventilation_stop_reports_do_not_jump_to_25(
         await respond(INFO_TILT_VENTILATION_POS_STOP)
         await respond(INFO_TOP_POS_STOP_WICH_TILT_POS)
         await tick(hass, freezer, 30)
-    assert attrs(hass)["current_position"] == 0
+    assert attrs(hass)["current_position"] == 1
     assert attrs(hass)["current_tilt_position"] == 50
     assert hass.states.get(ENTITY_ID).state == "open"
 
@@ -214,7 +216,7 @@ async def test_ventilation_step_from_mid_position(
     """The step is relative: wherever the cover is, it only nudges up."""
     await call(hass, "set_cover_position", position=40)
     await tick(hass, freezer, 35)
-    assert attrs(hass)["current_tilt_position"] == 0
+    assert attrs(hass)["current_tilt_position"] == 1
     position = model(hass).position
 
     await call(hass, "close_cover_tilt")
@@ -232,7 +234,7 @@ async def test_stale_movement_after_step_is_ignored(
     await tick(hass, freezer, 1)
     await respond(INFO_MOVING_UP)
     assert not get_entity(hass, ENTITY_ID).is_opening
-    assert attrs(hass)["current_position"] == 0
+    assert attrs(hass)["current_position"] == 1
 
 
 async def test_fixed_ventilation_position(
@@ -267,8 +269,8 @@ async def test_users_existing_config_uses_step(
     await respond(INFO_TILT_VENTILATION_POS_STOP)
     await tick(hass, freezer, 30)
     await respond(INFO_TILT_VENTILATION_POS_STOP)
-    assert attrs(hass)["current_position"] == 0
-    assert attrs(hass)["current_tilt_position"] == 100
+    assert attrs(hass)["current_position"] == 1
+    assert attrs(hass)["current_tilt_position"] == 99
 
 
 # ── intermediate (fixed preset) ─────────────────────────────────────────
@@ -283,7 +285,7 @@ async def test_intermediate_moves_to_fixed_position(
 
     await tick(hass, freezer, 2 + 0.25 * 48)
     assert attrs(hass)["current_position"] == 75
-    assert attrs(hass)["current_tilt_position"] == 0
+    assert attrs(hass)["current_tilt_position"] == 1
     await respond(INFO_INTERMEDIATE_POSITION_STOP)
     assert attrs(hass)["current_position"] == 75
 
@@ -305,7 +307,7 @@ async def test_position_interpolates_and_ui_updates(
     await tick(hass, freezer, 2 + 24)  # slats, then half the 48 s travel
     assert hass.states.get(ENTITY_ID).state == "closing"
     assert attrs(hass)["current_position"] == 50
-    assert attrs(hass)["current_tilt_position"] == 0
+    assert attrs(hass)["current_tilt_position"] == 1
 
 
 async def test_run_ends_at_end_stop(
@@ -412,7 +414,7 @@ async def test_set_tilt_runs_timed_pulse(
     await tick(hass, freezer, 1)
     mock_transmitter.stop.assert_called_once_with(1)
     assert attrs(hass)["current_tilt_position"] == 50
-    assert attrs(hass)["current_position"] == 0
+    assert attrs(hass)["current_position"] == 1
 
 
 async def test_tilt_buttons_rotate_slats(
@@ -425,6 +427,54 @@ async def test_tilt_buttons_rotate_slats(
     mock_transmitter.intermediate.assert_not_called()
     await tick(hass, freezer, 2)
     assert attrs(hass)["current_tilt_position"] == 100
+
+
+async def test_slat_tilt_buttons_report_real_tilt(
+    hass: HomeAssistant, respond
+) -> None:
+    """Fully closed slats can't close further: HA may grey out close tilt."""
+    await setup_entry(hass, make_entry([cover_subentry(tilt_buttons="slats")]))
+    await respond(INFO_BOTTOM_POSITION_STOP)
+    assert attrs(hass)["current_tilt_position"] == 0
+
+
+async def test_ventilate_close_ventilate_again(
+    hass: HomeAssistant, at_bottom, respond, freezer, mock_transmitter
+) -> None:
+    """Closed -> ventilation -> close -> ventilation, all from HA's buttons.
+
+    HA's frontend greys out "close" at position 0 and "close tilt" at tilt 0.
+    """
+    assert hass.states.get(ENTITY_ID).state == "closed"
+    assert attrs(hass)["current_tilt_position"] != 0  # close tilt usable
+
+    await call(hass, "close_cover_tilt")
+    await tick(hass, freezer, 1)
+    await respond(INFO_TILT_VENTILATION_POS_STOP)
+    assert hass.states.get(ENTITY_ID).state == "open"
+    assert attrs(hass)["current_position"] != 0  # close usable
+
+    await call(hass, "close_cover")
+    mock_transmitter.down.assert_called_once_with(1)
+    await tick(hass, freezer, 1)
+    await respond(INFO_BOTTOM_POSITION_STOP)
+    assert hass.states.get(ENTITY_ID).state == "closed"
+    assert attrs(hass)["current_tilt_position"] != 0  # close tilt usable again
+
+    mock_transmitter.reset_mock()
+    await call(hass, "close_cover_tilt")
+    mock_transmitter.ventilation_tilting.assert_called_once_with(1)
+
+
+async def test_closing_open_slats_at_bottom_ends_without_report(
+    hass: HomeAssistant, at_bottom, freezer
+) -> None:
+    """Closing only turns the slats; a missed end stop must not hang."""
+    await call(hass, "close_cover_tilt")
+    await tick(hass, freezer, 1)
+    await call(hass, "close_cover")
+    await tick(hass, freezer, 1 + END_STOP_GRACE + 2)
+    assert hass.states.get(ENTITY_ID).state == "closed"
 
 
 @pytest.mark.parametrize(
@@ -545,7 +595,7 @@ async def test_restores_move_interrupted_by_restart(
     )
     await setup_entry(hass, make_entry())
     assert model(hass).position == pytest.approx(100 - 18 / 48 * 100)
-    assert attrs(hass)["current_tilt_position"] == 0
+    assert attrs(hass)["current_tilt_position"] == 1
 
 
 async def test_restored_finished_run_lands_on_end_stop(

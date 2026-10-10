@@ -363,13 +363,30 @@ class EleroCover(CoverEntity, RestoreEntity):
 
     @property
     def current_cover_position(self) -> int | None:
-        position = self._current().position
-        return None if position is None else round(position)
+        state = self._current()
+        if state.position is None:
+            return None
+        position = round(state.position)
+        # HA reads 0 % as fully closed and greys out "close". A blind at the
+        # bottom with its slats turned open lets light through and can still
+        # close, so it reports the smallest open position instead.
+        if position == 0 and self._timing.has_tilt and state.tilt is not None:
+            if round(state.tilt) > 0:
+                return 1
+        return position
 
     @property
     def current_cover_tilt_position(self) -> int | None:
         tilt = self._current().tilt
-        return None if tilt is None else round(tilt)
+        if tilt is None:
+            return None
+        tilt = round(tilt)
+        if self._opts.tilt_buttons != TILT_BUTTONS_SLATS:
+            # The tilt buttons send the drive's presets, which do something
+            # from any slat angle, but HA greys out close / open tilt at
+            # 0 / 100 %. Keep them usable.
+            tilt = min(max(tilt, 1), 99)
+        return tilt
 
     @property
     def is_opening(self) -> bool:
@@ -382,13 +399,7 @@ class EleroCover(CoverEntity, RestoreEntity):
     @property
     def is_closed(self) -> bool | None:
         position = self.current_cover_position
-        if position is None:
-            return None
-        if position != 0:
-            return False
-        # A blind at the bottom with its slats turned open lets light through.
-        tilt = self.current_cover_tilt_position
-        return not self._timing.has_tilt or tilt is None or tilt == 0
+        return None if position is None else position == 0
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -541,7 +552,11 @@ class EleroCover(CoverEntity, RestoreEntity):
         if start.position is None:
             return self._timing.travel_time(direction)
         target = OPEN if direction == UP else CLOSED
-        return time_to_position(start, target, self._timing)[1]
+        # Already at the end: the run only turns the slats.
+        return (
+            time_to_position(start, target, self._timing)[1]
+            or time_to_tilt(start, target, self._timing)[1]
+        )
 
     def _end_stop_state(
         self, direction: int, current: CoverState | None = None
