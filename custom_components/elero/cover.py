@@ -210,6 +210,7 @@ class _Move:
     learn: bool = False  # full run from one end stop, usable for learning
     last_moving_seen: float | None = None
     stopping: bool = False  # STOP is queued; the move ends when it goes out
+    sent: bool = True  # False until our command for this move has gone out
     timers: list[CALLBACK_TYPE] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -257,6 +258,8 @@ class EleroCover(CoverEntity, RestoreEntity):
         self._elero_state: str | None = None
         self._pending_target: float | None = None
         self._ignore_movement_until = 0.0
+        # A "moving" report that outlived the move it belonged to.
+        self._stale_moving: str | None = None
         self._learned: dict[str, float] = {}
         self._available = False
         self._ui_tick: CALLBACK_TYPE | None = None
@@ -467,6 +470,7 @@ class EleroCover(CoverEntity, RestoreEntity):
                 kind == MOVE_RUN
                 and start.position == (CLOSED if direction == UP else OPEN)
             ),
+            sent=schedule,
         )
         if schedule:
             self._schedule_move_timers(move)
@@ -510,6 +514,7 @@ class EleroCover(CoverEntity, RestoreEntity):
             if self._move is move:
                 self._end_move()
             raise
+        move.sent = True
         if self._move is not move or move.stopping:
             return None
         move.started = sent
@@ -589,7 +594,7 @@ class EleroCover(CoverEntity, RestoreEntity):
         elapsed = self._now() - move.started
         if elapsed > self._expected_run_time(move.start, move.direction) + END_STOP_GRACE:
             # No end stop reported: the drive will have stopped there anyway.
-            self._end_move(self._end_stop_state(move.direction))
+            self._give_up_move(self._end_stop_state(move.direction))
             return
         self._hub.async_request_poll(self._channel)
         self._later(POLL_INTERVAL_ENDGAME, self._async_endgame_poll)
@@ -601,10 +606,21 @@ class EleroCover(CoverEntity, RestoreEntity):
             return
         limit = self._timing.travel_time(move.direction) + END_STOP_GRACE
         if self._now() - move.started > limit:
-            self._end_move()
+            self._give_up_move()
             return
         self._hub.async_request_poll(self._channel)
         self._later(POLL_INTERVAL_MOVING, self._async_external_poll)
+
+    @callback
+    def _give_up_move(self, final: CoverState | None = None) -> None:
+        """End a move whose end the drive never reported.
+
+        Some drives keep answering "moving" long after they stopped. Until
+        that report changes, it must not start a new move.
+        """
+        if self._elero_state in STATUSES_UP + STATUSES_DOWN:
+            self._stale_moving = self._elero_state
+        self._end_move(final)
 
     @callback
     def _async_idle_poll(self, _now=None) -> None:
@@ -695,8 +711,16 @@ class EleroCover(CoverEntity, RestoreEntity):
         if status != self._elero_state and status in STATUSES_FAULT:
             _LOGGER.warning("%s reports '%s'", self.entity_id, status)
         self._elero_state = status
+        if status != self._stale_moving:
+            self._stale_moving = None
 
-        if status == INFO_TOP_POSITION_STOP:
+        if self._move is not None and not self._move.sent:
+            # The drive answers a command with its state from *before* the
+            # command ("bottom position stop" to a ventilation step from the
+            # bottom). Same for a poll that went out first. Neither says
+            # anything about the move that is starting.
+            pass
+        elif status == INFO_TOP_POSITION_STOP:
             self._on_end_stop(UP)
         elif status == INFO_BOTTOM_POSITION_STOP:
             self._on_end_stop(DOWN)
@@ -709,7 +733,8 @@ class EleroCover(CoverEntity, RestoreEntity):
             # it went out, which is more precise than this report.
             pass
         elif status in STATUSES_UP or status in STATUSES_DOWN:
-            self._on_moving(UP if status in STATUSES_UP else DOWN)
+            if status != self._stale_moving:
+                self._on_moving(UP if status in STATUSES_UP else DOWN)
         elif status == INFO_STOPPED_IN_UNDEFINED_POSITION:
             if self._move is not None and self._move.kind != MOVE_PRESET:
                 self._end_move()

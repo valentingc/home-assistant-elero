@@ -477,6 +477,64 @@ async def test_closing_open_slats_at_bottom_ends_without_report(
     assert hass.states.get(ENTITY_ID).state == "closed"
 
 
+def answers(mock_transmitter, command: str, status: str) -> None:
+    """Make the drive answer `command` with `status`, as the stick does."""
+    getattr(mock_transmitter, command).side_effect = lambda channel: (
+        mock_transmitter.handlers[channel]({"status": status})
+    )
+
+
+async def test_command_answer_is_the_state_before_the_command(
+    hass: HomeAssistant, at_bottom, freezer, mock_transmitter
+) -> None:
+    """Seen on a real drive: ventilation from the bottom is answered with
+    "bottom position stop". That must not cut the step short."""
+    answers(mock_transmitter, "ventilation_tilting", INFO_BOTTOM_POSITION_STOP)
+    await call(hass, "close_cover_tilt")
+    assert get_entity(hass, ENTITY_ID).is_opening
+
+    await tick(hass, freezer, 1)
+    assert hass.states.get(ENTITY_ID).state == "open"
+    assert attrs(hass)["current_tilt_position"] == 50
+
+
+async def test_close_answered_with_undefined_position_keeps_closing(
+    hass: HomeAssistant, at_bottom, respond, freezer, mock_transmitter
+) -> None:
+    """After ventilation the drive reports "stopped in undefined position",
+    which is also its answer to the next "down"."""
+    await call(hass, "close_cover_tilt")
+    await tick(hass, freezer, 1)
+    await respond(INFO_STOPPED_IN_UNDEFINED_POSITION)
+
+    answers(mock_transmitter, "down", INFO_STOPPED_IN_UNDEFINED_POSITION)
+    await call(hass, "close_cover")
+    assert hass.states.get(ENTITY_ID).state == "closing"
+
+
+async def test_stale_moving_report_does_not_restart_moves(
+    hass: HomeAssistant, at_bottom, respond, freezer
+) -> None:
+    """Seen on a real drive: after closing from ventilation it kept answering
+    "moving down" for minutes. HA cycled closing -> closed every poll."""
+    await call(hass, "close_cover_tilt")
+    await tick(hass, freezer, 1)
+    await call(hass, "close_cover")
+    for _ in range(int(1 + END_STOP_GRACE + 3)):
+        await respond(INFO_MOVING_DOWN)
+        await tick(hass, freezer, 1)
+    assert hass.states.get(ENTITY_ID).state == "closed"
+
+    for _ in range(3):
+        await tick(hass, freezer, 30)
+        await respond(INFO_MOVING_DOWN)
+        assert hass.states.get(ENTITY_ID).state == "closed"
+
+    # A new report is news again, e.g. someone using the remote.
+    await respond(INFO_MOVING_UP)
+    assert hass.states.get(ENTITY_ID).state == "opening"
+
+
 @pytest.mark.parametrize(
     ("tilt", "command"), [(20, "ventilation_tilting"), (80, "intermediate")]
 )
