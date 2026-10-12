@@ -529,6 +529,7 @@ such deprecations can escalate into hard errors (as happened with `via_device` i
 
 ## Changelog
 
+- **4.3.7** (2026-10-12): Ventilation and close no longer flip straight back to "closed": drives answer a command with their state from *before* it (e.g. "bottom position stop" to ventilation from the bottom), which used to end the move that had just started. A "moving" report that a drive keeps repeating after it stopped no longer makes the cover cycle between closing and closed.
 - **4.3.6** (2026-10-10): Corrupt or misaligned replies from the stick are discarded and the command retried, instead of applying a garbled status to a cover; leftover bytes from an earlier reply are flushed before each command.
 - **4.3.5** (2026-10-10): The close and close tilt buttons stay usable around ventilation: a closed blind can ventilate, and a ventilated blind (bottom, slats open) can close again. Released reporting itself as 4.3.3.
 - **4.3.4** (2026-10-09): A blind at the bottom with its slats open shows as open, not closed. Released reporting itself as 4.3.3.
